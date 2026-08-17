@@ -1,0 +1,15 @@
+DROP TABLE IF EXISTS status_history;
+DROP TABLE IF EXISTS follow_ups;
+DROP TABLE IF EXISTS order_items;
+DROP TABLE IF EXISTS orders;
+DROP TABLE IF EXISTS products;
+DROP TABLE IF EXISTS courier_locations;
+DROP TABLE IF EXISTS couriers;
+DROP TABLE IF EXISTS customers;
+DROP TABLE IF EXISTS users;
+
+DROP TYPE IF EXISTS order_status;
+DROP TYPE IF EXISTS order_source;
+DROP TYPE IF EXISTS user_role;
+
+DROP EXTENSION IF EXISTS pgcrypto;
