@@ -213,6 +213,7 @@ type Product struct {
 	Price        pgtype.Numeric
 	AvailableQty int32
 	CreatedAt    pgtype.Timestamptz
+	WarehouseQty int32
 }
 
 type StatusHistory struct {

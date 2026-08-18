@@ -9,3 +9,7 @@ frontend/dist/
 
 # IDE
 .vscode/.env
+
+
+*.exe
+backend/package-lock.json

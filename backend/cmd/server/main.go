@@ -3,7 +3,9 @@ package main
 import (
 	"log"
 	"net/http"
+	"time"
 
+	"golang.org/x/time/rate"
 	"os"
 
 	"oms-backend/internal/auth"
@@ -55,9 +57,11 @@ func main() {
 		MaxAge:           300,
 	}))
 
-	r.Post("/api/auth/login", authHandler.Login)
+	loginRateLimiter := auth.NewLoginRateLimiter(rate.Limit(5.0/60.0), 5)
+	loginRateLimiter.Cleanup(10 * time.Minute)
 
-	//heretrtojfksgopdfjg
+	r.With(loginRateLimiter.Middleware).Post("/api/auth/login", authHandler.Login)
+
 	r.Group(func(r chi.Router) {
 		r.Use(auth.RequireAuth(jwtSecret))
 

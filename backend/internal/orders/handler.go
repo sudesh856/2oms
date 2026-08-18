@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 
+	"oms-backend/internal/api"
 	"oms-backend/internal/auth"
 	db "oms-backend/internal/db/generated"
 
@@ -26,7 +27,7 @@ func NewHandler(queries *db.Queries) *Handler {
 func (h *Handler) GetOrder(w http.ResponseWriter, r *http.Request) {
 	orderID, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
-		http.Error(w, "invalid order id", http.StatusBadRequest)
+		api.WriteError(w, http.StatusBadRequest, "INVALID_ORDER_ID", "invalid order id")
 		return
 	}
 
@@ -37,7 +38,7 @@ func (h *Handler) GetOrder(w http.ResponseWriter, r *http.Request) {
 
 	claims, ok := auth.GetClaims(r.Context())
 	if !ok {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		api.WriteError(w, http.StatusUnauthorized, "UNAUTHORIZED", "unauthorized")
 		return
 	}
 
@@ -48,11 +49,11 @@ func (h *Handler) GetOrder(w http.ResponseWriter, r *http.Request) {
 		order, err := h.Queries.GetOrderForAdmin(r.Context(), id)
 		if err != nil {
 			if err == pgx.ErrNoRows {
-				http.Error(w, "order not found", http.StatusNotFound)
+				api.WriteError(w, http.StatusNotFound, "ORDER_NOT_FOUND", "order not found")
 				return
 			}
 
-			http.Error(w, "failed to get order", http.StatusInternalServerError)
+			api.WriteError(w, http.StatusInternalServerError, "ORDER_FETCH_FAILED", "failed to get order")
 			return
 		}
 
@@ -62,25 +63,25 @@ func (h *Handler) GetOrder(w http.ResponseWriter, r *http.Request) {
 		order, err := h.Queries.GetOrderForStaff(r.Context(), id)
 		if err != nil {
 			if err == pgx.ErrNoRows {
-				http.Error(w, "order not found", http.StatusNotFound)
+				api.WriteError(w, http.StatusNotFound, "ORDER_NOT_FOUND", "order not found")
 				return
 			}
 
-			http.Error(w, "failed to get order", http.StatusInternalServerError)
+			api.WriteError(w, http.StatusInternalServerError, "ORDER_FETCH_FAILED", "failed to get order")
 			return
 		}
 
 		json.NewEncoder(w).Encode(order)
 
 	default:
-		http.Error(w, "forbidden", http.StatusForbidden)
+		api.WriteError(w, http.StatusForbidden, "FORBIDDEN", "forbidden")
 	}
 }
 
 func (h *Handler) ListOrders(w http.ResponseWriter, r *http.Request) {
 	claims, ok := auth.GetClaims(r.Context())
 	if !ok {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		api.WriteError(w, http.StatusUnauthorized, "UNAUTHORIZED", "unauthorized")
 		return
 	}
 
@@ -90,7 +91,7 @@ func (h *Handler) ListOrders(w http.ResponseWriter, r *http.Request) {
 	case "superadmin", "admin":
 		orders, err := h.Queries.ListOrdersForAdmin(r.Context())
 		if err != nil {
-			http.Error(w, "failed to list orders", http.StatusInternalServerError)
+			api.WriteError(w, http.StatusInternalServerError, "ORDERS_FETCH_FAILED", "failed to list orders")
 			return
 		}
 
@@ -103,7 +104,7 @@ func (h *Handler) ListOrders(w http.ResponseWriter, r *http.Request) {
 	case "staff":
 		orders, err := h.Queries.ListOrdersForStaff(r.Context())
 		if err != nil {
-			http.Error(w, "failed to list orders", http.StatusInternalServerError)
+			api.WriteError(w, http.StatusInternalServerError, "ORDERS_FETCH_FAILED", "failed to list orders")
 			return
 		}
 
@@ -114,7 +115,7 @@ func (h *Handler) ListOrders(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(orders)
 
 	default:
-		http.Error(w, "forbidden", http.StatusForbidden)
+		api.WriteError(w, http.StatusForbidden, "FORBIDDEN", "forbidden")
 	}
 }
 
@@ -136,13 +137,13 @@ type createStaffOrderRequest struct {
 func (h *Handler) CreateOrder(w http.ResponseWriter, r *http.Request) {
 	claims, ok := auth.GetClaims(r.Context())
 	if !ok {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		api.WriteError(w, http.StatusUnauthorized, "UNAUTHORIZED", "unauthorized")
 		return
 	}
 
 	createdBy, err := uuid.Parse(claims.UserID)
 	if err != nil {
-		http.Error(w, "invalid user id", http.StatusInternalServerError)
+		api.WriteError(w, http.StatusInternalServerError, "INVALID_USER_ID", "invalid user id")
 		return
 	}
 
@@ -150,13 +151,13 @@ func (h *Handler) CreateOrder(w http.ResponseWriter, r *http.Request) {
 		var req createStaffOrderRequest
 
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, "invalid request", http.StatusBadRequest)
+			api.WriteError(w, http.StatusBadRequest, "INVALID_REQUEST", "invalid request")
 			return
 		}
 
 		customerID, err := uuid.Parse(req.CustomerID)
 		if err != nil {
-			http.Error(w, "invalid customer id", http.StatusBadRequest)
+			api.WriteError(w, http.StatusBadRequest, "INVALID_CUSTOMER_ID", "invalid customer id")
 			return
 		}
 
@@ -178,7 +179,7 @@ func (h *Handler) CreateOrder(w http.ResponseWriter, r *http.Request) {
 			},
 		)
 		if err != nil {
-			http.Error(w, "failed to create order", http.StatusInternalServerError)
+			api.WriteError(w, http.StatusInternalServerError, "ORDER_CREATE_FAILED", "failed to create order")
 			return
 		}
 
@@ -189,26 +190,26 @@ func (h *Handler) CreateOrder(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if claims.Role != "admin" && claims.Role != "superadmin" {
-		http.Error(w, "forbidden", http.StatusForbidden)
+		api.WriteError(w, http.StatusForbidden, "FORBIDDEN", "forbidden")
 		return
 	}
 
 	var req createOrderRequest
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid request", http.StatusBadRequest)
+		api.WriteError(w, http.StatusBadRequest, "INVALID_REQUEST", "invalid request")
 		return
 	}
 
 	customerID, err := uuid.Parse(req.CustomerID)
 	if err != nil {
-		http.Error(w, "invalid customer id", http.StatusBadRequest)
+		api.WriteError(w, http.StatusBadRequest, "INVALID_CUSTOMER_ID", "invalid customer id")
 		return
 	}
 
 	var codAmount pgtype.Numeric
 	if err := codAmount.Scan(req.CodAmount); err != nil {
-		http.Error(w, "invalid cod amount", http.StatusBadRequest)
+		api.WriteError(w, http.StatusBadRequest, "INVALID_COD_AMOUNT", "invalid cod amount")
 		return
 	}
 
@@ -231,7 +232,7 @@ func (h *Handler) CreateOrder(w http.ResponseWriter, r *http.Request) {
 		},
 	)
 	if err != nil {
-		http.Error(w, "failed to create order", http.StatusInternalServerError)
+		api.WriteError(w, http.StatusInternalServerError, "ORDER_CREATE_FAILED", "failed to create order")
 		return
 	}
 

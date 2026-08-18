@@ -1,0 +1,2 @@
+ALTER TABLE products
+ADD COLUMN warehouse_qty INTEGER NOT NULL DEFAULT 0;

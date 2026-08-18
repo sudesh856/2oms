@@ -4,6 +4,8 @@ import (
 	"context"
 	"net/http"
 	"strings"
+
+	"oms-backend/internal/api"
 )
 
 type contextKey string
@@ -16,7 +18,12 @@ func RequireAuth(secret string) func(http.Handler) http.Handler {
 			header := r.Header.Get("Authorization")
 
 			if !strings.HasPrefix(header, "Bearer ") {
-				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				api.WriteError(
+					w,
+					http.StatusUnauthorized,
+					"UNAUTHORIZED",
+					"unauthorized",
+				)
 				return
 			}
 
@@ -24,7 +31,12 @@ func RequireAuth(secret string) func(http.Handler) http.Handler {
 
 			claims, err := ParseToken(tokenString, secret)
 			if err != nil {
-				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				api.WriteError(
+					w,
+					http.StatusUnauthorized,
+					"UNAUTHORIZED",
+					"unauthorized",
+				)
 				return
 			}
 
@@ -43,6 +55,7 @@ func GetClaims(ctx context.Context) (*Claims, bool) {
 	claims, ok := ctx.Value(claimsKey).(*Claims)
 	return claims, ok
 }
+
 func RequireRole(roles ...string) func(http.Handler) http.Handler {
 	allowed := make(map[string]bool)
 
@@ -55,7 +68,12 @@ func RequireRole(roles ...string) func(http.Handler) http.Handler {
 			claims, ok := GetClaims(r.Context())
 
 			if !ok || !allowed[claims.Role] {
-				http.Error(w, "forbidden", http.StatusForbidden)
+				api.WriteError(
+					w,
+					http.StatusForbidden,
+					"FORBIDDEN",
+					"forbidden",
+				)
 				return
 			}
 

@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 
+	"oms-backend/internal/api"
 	db "oms-backend/internal/db/generated"
 )
 
@@ -25,18 +26,18 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 	var req loginRequest
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid request", http.StatusBadRequest)
+		api.WriteError(w, http.StatusBadRequest, "INVALID_REQUEST", "invalid request")
 		return
 	}
 
 	user, err := h.Queries.GetUserByPhone(r.Context(), req.Phone)
 	if err != nil {
-		http.Error(w, "invalid credentials", http.StatusUnauthorized)
+		api.WriteError(w, http.StatusUnauthorized, "INVALID_CREDENTIALS", "invalid credentials")
 		return
 	}
 
 	if err := CheckPassword(req.Password, user.PasswordHash); err != nil {
-		http.Error(w, "invalid credentials", http.StatusUnauthorized)
+		api.WriteError(w, http.StatusUnauthorized, "INVALID_CREDENTIALS", "invalid credentials")
 		return
 	}
 
@@ -48,7 +49,7 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 		secret,
 	)
 	if err != nil {
-		http.Error(w, "failed to generate token", http.StatusInternalServerError)
+		api.WriteError(w, http.StatusInternalServerError, "TOKEN_GENERATION_FAILED", "failed to generate token")
 		return
 	}
 
@@ -63,7 +64,7 @@ func Me(w http.ResponseWriter, r *http.Request) {
 	claims, ok := GetClaims(r.Context())
 
 	if !ok {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		api.WriteError(w, http.StatusUnauthorized, "UNAUTHORIZED", "unauthorized")
 		return
 	}
 
