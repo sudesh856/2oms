@@ -3,12 +3,15 @@ package main
 import (
 	"log"
 	"net/http"
+	"oms-backend/internal/products"
 	"time"
 
-	"golang.org/x/time/rate"
 	"os"
 
+	"golang.org/x/time/rate"
+
 	"oms-backend/internal/auth"
+	"oms-backend/internal/customers"
 	"oms-backend/internal/db/connection"
 	db "oms-backend/internal/db/generated"
 	"oms-backend/internal/orders"
@@ -46,7 +49,9 @@ func main() {
 	authHandler := &auth.Handler{
 		Queries: queries,
 	}
-	orderHandler := orders.NewHandler(queries)
+	orderHandler := orders.NewHandler(queries, dbPool)
+	customerHandler := customers.NewHandler(queries)
+	productHandler := products.NewHandler(queries)
 
 	r := chi.NewRouter()
 	r.Use(cors.Handler(cors.Options{
@@ -67,9 +72,21 @@ func main() {
 
 		r.Get("/api/me", auth.Me)
 
+		r.With(auth.RequireRole("superadmin", "admin", "staff")).Get("/api/customers", customerHandler.ListCustomers)
+		r.With(auth.RequireRole("superadmin", "admin", "staff")).Post("/api/customers", customerHandler.CreateCustomer)
+		r.With(auth.RequireRole("superadmin", "admin", "staff")).Get("/api/customers/search", customerHandler.SearchByPhone)
+		r.With(auth.RequireRole("superadmin", "admin", "staff")).Get("/api/customers/{id}", customerHandler.GetCustomer)
+
+		r.With(auth.RequireRole("superadmin", "admin")).Patch("/api/products/{id}", productHandler.UpdateProduct)
+
+		r.With(auth.RequireRole("superadmin", "admin")).Post("/api/products", productHandler.CreateProduct)
+		r.With(auth.RequireRole("superadmin", "admin", "staff")).Get("/api/products", productHandler.ListProducts)
+		r.With(auth.RequireRole("superadmin", "admin", "staff")).Get("/api/products/{id}", productHandler.GetProduct)
+		r.With(auth.RequireRole("superadmin", "admin")).Put("/api/products/{id}", productHandler.UpdateProduct)
 		r.With(auth.RequireRole("superadmin", "admin", "staff")).Get("/api/orders/{id}", orderHandler.GetOrder)
 		r.With(auth.RequireRole("superadmin", "admin", "staff")).Get("/api/orders", orderHandler.ListOrders)
 		r.With(auth.RequireRole("superadmin", "admin", "staff")).Post("/api/orders", orderHandler.CreateOrder)
+		r.With(auth.RequireRole("superadmin", "admin", "staff")).Patch("/api/orders/{id}/status", orderHandler.UpdateStatus)
 
 		r.With(auth.RequireRole("superadmin", "admin")).Get("/api/admin/test", func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")

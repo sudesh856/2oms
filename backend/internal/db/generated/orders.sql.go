@@ -419,6 +419,7 @@ SET
     status = $2,
     updated_at = NOW()
 WHERE id = $1
+  AND status = $3
 RETURNING
     id,
     customer_id,
@@ -435,12 +436,13 @@ RETURNING
 `
 
 type UpdateOrderStatusParams struct {
-	ID     pgtype.UUID
-	Status OrderStatus
+	ID       pgtype.UUID
+	Status   OrderStatus
+	Status_2 OrderStatus
 }
 
 func (q *Queries) UpdateOrderStatus(ctx context.Context, arg UpdateOrderStatusParams) (Order, error) {
-	row := q.db.QueryRow(ctx, updateOrderStatus, arg.ID, arg.Status)
+	row := q.db.QueryRow(ctx, updateOrderStatus, arg.ID, arg.Status, arg.Status_2)
 	var i Order
 	err := row.Scan(
 		&i.ID,

@@ -43,8 +43,9 @@ func (s *Service) UpdateStatus(
 	order, err := queries.UpdateOrderStatus(
 		ctx,
 		db.UpdateOrderStatusParams{
-			ID:     orderID,
-			Status: toStatus,
+			ID:       orderID,
+			Status:   toStatus,
+			Status_2: fromStatus,
 		},
 	)
 	if err != nil {

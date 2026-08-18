@@ -32,7 +32,7 @@ func TestStaffOrderResponseDoesNotExposeCODAmount(t *testing.T) {
 	defer pool.Close()
 
 	queries := db.New(pool)
-	handler := NewHandler(queries)
+	handler := NewHandler(queries, pool)
 
 	// Find an existing order.
 	var orderID string
