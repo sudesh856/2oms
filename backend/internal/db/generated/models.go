@@ -182,6 +182,7 @@ type FollowUp struct {
 	NextActionDate pgtype.Date
 	Note           pgtype.Text
 	CreatedAt      pgtype.Timestamptz
+	AssignedTo     pgtype.UUID
 }
 
 type Order struct {

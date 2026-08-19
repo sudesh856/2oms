@@ -98,6 +98,18 @@ func (s *Service) CreateOrderWithItems(
 		}
 	}
 
+	if _, err := queries.CreateStatusHistory(
+		ctx,
+		db.CreateStatusHistoryParams{
+			OrderID:    order.ID,
+			FromStatus: db.NullOrderStatus{Valid: false},
+			ToStatus:   db.OrderStatusConfirmed,
+			ChangedBy:  createdBy,
+		},
+	); err != nil {
+		return db.Order{}, fmt.Errorf("CREATE STATUS HISTORY: %w", err)
+	}
+
 	for _, item := range input.Items {
 		productID := pgtype.UUID{
 			Bytes: item.ProductID,
@@ -113,13 +125,25 @@ func (s *Service) CreateOrderWithItems(
 		)
 		if err != nil {
 			if err == pgx.ErrNoRows {
-				return db.Order{}, fmt.Errorf(
-					"DECREASE STOCK: insufficient stock or product not found: %s",
-					item.ProductID,
+				productDetails, fetchErr := queries.GetProductByID(ctx, productID)
+				if fetchErr != nil {
+					return db.Order{}, fmt.Errorf("GET PRODUCT: %w", fetchErr)
+				}
+				productPrice := productDetails.Price
+				_, err = queries.CreateOrderItem(
+					ctx,
+					db.CreateOrderItemParams{
+						OrderID: order.ID, ProductID: productID,
+						Quantity: item.Quantity, Price: productPrice,
+					},
 				)
+				if err != nil {
+					return db.Order{}, fmt.Errorf("CREATE ORDER ITEM: %w", err)
+				}
+				continue
+			} else {
+				return db.Order{}, fmt.Errorf("DECREASE STOCK: %w", err)
 			}
-
-			return db.Order{}, fmt.Errorf("DECREASE STOCK: %w", err)
 		}
 
 		_, err = queries.CreateOrderItem(

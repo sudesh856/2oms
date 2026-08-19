@@ -12,7 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-func TestCreateOrderWithItemsRollsBackOnInsufficientStock(t *testing.T) {
+func TestCreateOrderWithItemsWarnsOnInsufficientStock(t *testing.T) {
 	databaseURL := os.Getenv("DATABASE_URL")
 	if databaseURL == "" {
 		t.Skip("DATABASE_URL is not set")
@@ -105,9 +105,9 @@ func TestCreateOrderWithItemsRollsBackOnInsufficientStock(t *testing.T) {
 		},
 	}
 
-	_, err = service.CreateOrderWithItems(ctx, input, false)
-	if err == nil {
-		t.Fatal("expected order creation to fail because of insufficient stock")
+	createdOrder, err := service.CreateOrderWithItems(ctx, input, false)
+	if err != nil {
+		t.Fatalf("expected order creation to succeed with insufficient stock warning: %v", err)
 	}
 
 	var orderCount int
@@ -122,11 +122,8 @@ func TestCreateOrderWithItemsRollsBackOnInsufficientStock(t *testing.T) {
 		t.Fatalf("check order rollback: %v", err)
 	}
 
-	if orderCount != 0 {
-		t.Fatalf(
-			"expected 0 orders after rollback, got %d",
-			orderCount,
-		)
+	if orderCount != 1 {
+		t.Fatalf("expected 1 order despite insufficient stock, got %d", orderCount)
 	}
 
 	var availableQty int32
@@ -161,11 +158,12 @@ func TestCreateOrderWithItemsRollsBackOnInsufficientStock(t *testing.T) {
 		t.Fatalf("check order item rollback: %v", err)
 	}
 
-	if itemCount != 0 {
-		t.Fatalf(
-			"expected 0 order items after rollback, got %d",
-			itemCount,
-		)
+	if itemCount != 1 {
+		t.Fatalf("expected 1 order item despite insufficient stock, got %d", itemCount)
+	}
+
+	if createdOrder.ID.Bytes == [16]byte{} {
+		t.Fatal("expected created order id")
 	}
 }
 
