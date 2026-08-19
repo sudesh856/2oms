@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 
+	"oms-backend/internal/api"
 	db "oms-backend/internal/db/generated"
 
 	"github.com/go-chi/chi/v5"
@@ -33,7 +34,7 @@ func (h *Handler) CreateCustomer(w http.ResponseWriter, r *http.Request) {
 	var req createCustomerRequest
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
+		api.WriteError(w, http.StatusBadRequest, "INVALID_REQUEST", "invalid request")
 		return
 	}
 
@@ -41,12 +42,12 @@ func (h *Handler) CreateCustomer(w http.ResponseWriter, r *http.Request) {
 	req.Name = strings.TrimSpace(req.Name)
 
 	if req.Phone == "" {
-		http.Error(w, "phone is required", http.StatusBadRequest)
+		api.WriteError(w, http.StatusBadRequest, "PHONE_REQUIRED", "phone is required")
 		return
 	}
 
 	if req.Name == "" {
-		http.Error(w, "name is required", http.StatusBadRequest)
+		api.WriteError(w, http.StatusBadRequest, "NAME_REQUIRED", "name is required")
 		return
 	}
 
@@ -57,7 +58,7 @@ func (h *Handler) CreateCustomer(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err != pgx.ErrNoRows {
-		http.Error(w, "failed to check customer", http.StatusInternalServerError)
+		api.WriteError(w, http.StatusInternalServerError, "CUSTOMER_CHECK_FAILED", "failed to check customer")
 		return
 	}
 
@@ -71,7 +72,7 @@ func (h *Handler) CreateCustomer(w http.ResponseWriter, r *http.Request) {
 		},
 	)
 	if err != nil {
-		http.Error(w, "failed to create customer", http.StatusInternalServerError)
+		api.WriteError(w, http.StatusInternalServerError, "CUSTOMER_CREATE_FAILED", "failed to create customer")
 		return
 	}
 
@@ -82,7 +83,7 @@ func (h *Handler) SearchByPhone(w http.ResponseWriter, r *http.Request) {
 	phone := strings.TrimSpace(r.URL.Query().Get("phone"))
 
 	if phone == "" {
-		http.Error(w, "phone is required", http.StatusBadRequest)
+		api.WriteError(w, http.StatusBadRequest, "PHONE_REQUIRED", "phone is required")
 		return
 	}
 
@@ -92,11 +93,11 @@ func (h *Handler) SearchByPhone(w http.ResponseWriter, r *http.Request) {
 	)
 	if err != nil {
 		if err == pgx.ErrNoRows {
-			http.Error(w, "customer not found", http.StatusNotFound)
+			api.WriteError(w, http.StatusNotFound, "CUSTOMER_NOT_FOUND", "customer not found")
 			return
 		}
 
-		http.Error(w, "failed to search customer", http.StatusInternalServerError)
+		api.WriteError(w, http.StatusInternalServerError, "CUSTOMER_SEARCH_FAILED", "failed to search customer")
 		return
 	}
 
@@ -109,7 +110,7 @@ func (h *Handler) GetCustomer(w http.ResponseWriter, r *http.Request) {
 	var customerID pgtype.UUID
 
 	if err := customerID.Scan(id); err != nil {
-		http.Error(w, "invalid customer id", http.StatusBadRequest)
+		api.WriteError(w, http.StatusBadRequest, "INVALID_CUSTOMER_ID", "invalid customer id")
 		return
 	}
 
@@ -119,11 +120,11 @@ func (h *Handler) GetCustomer(w http.ResponseWriter, r *http.Request) {
 	)
 	if err != nil {
 		if err == pgx.ErrNoRows {
-			http.Error(w, "customer not found", http.StatusNotFound)
+			api.WriteError(w, http.StatusNotFound, "CUSTOMER_NOT_FOUND", "customer not found")
 			return
 		}
 
-		http.Error(w, "failed to get customer", http.StatusInternalServerError)
+		api.WriteError(w, http.StatusInternalServerError, "CUSTOMER_FETCH_FAILED", "failed to get customer")
 		return
 	}
 
@@ -142,7 +143,7 @@ func (h *Handler) ListCustomers(w http.ResponseWriter, r *http.Request) {
 		},
 	)
 	if err != nil {
-		http.Error(w, "failed to list customers", http.StatusInternalServerError)
+		api.WriteError(w, http.StatusInternalServerError, "CUSTOMERS_FETCH_FAILED", "failed to list customers")
 		return
 	}
 

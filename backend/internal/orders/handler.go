@@ -2,8 +2,11 @@ package orders
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
+	"time"
 
 	"oms-backend/internal/api"
 	"oms-backend/internal/auth"
@@ -157,6 +160,111 @@ func writeOrdersJSON(w http.ResponseWriter, orders any, staff bool) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(result)
 }
+
+func writePaginatedOrdersJSON(w http.ResponseWriter, orders any, staff bool, page, limit int) {
+	data, err := json.Marshal(orders)
+	if err != nil {
+		api.WriteError(w, http.StatusInternalServerError, "ORDERS_SERIALIZE_FAILED", "failed to serialize orders")
+		return
+	}
+
+	var raw []map[string]any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		api.WriteError(w, http.StatusInternalServerError, "ORDERS_SERIALIZE_FAILED", "failed to serialize orders")
+		return
+	}
+
+	hasNext := len(raw) > limit
+	if hasNext {
+		raw = raw[:limit]
+	}
+
+	rename := map[string]string{
+		"ID": "id", "CustomerID": "customer_id", "Source": "source", "Status": "status",
+		"CourierID": "courier_id", "LocationID": "location_id", "Address": "address",
+		"CODAmount": "cod_amount", "IsStoreVisit": "is_store_visit", "CreatedBy": "created_by",
+		"CreatedAt": "created_at", "UpdatedAt": "updated_at",
+	}
+	result := make([]map[string]any, 0, len(raw))
+	for _, item := range raw {
+		normalized := make(map[string]any, len(item))
+		for key, value := range item {
+			jsonKey := rename[key]
+			if jsonKey == "" {
+				jsonKey = key
+			}
+			if staff && jsonKey == "cod_amount" {
+				continue
+			}
+			normalized[jsonKey] = value
+		}
+		result = append(result, normalized)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{
+		"orders": result,
+		"pagination": map[string]any{
+			"page":     page,
+			"limit":    limit,
+			"has_next": hasNext,
+		},
+	})
+}
+
+func parseOrderListParams(r *http.Request) (db.ListOrdersForAdminParams, int, int, error) {
+	page := 1
+	limit := 25
+	var err error
+	if value := r.URL.Query().Get("page"); value != "" {
+		page, err = strconv.Atoi(value)
+		if err != nil || page < 1 {
+			return db.ListOrdersForAdminParams{}, 0, 0, fmt.Errorf("invalid page")
+		}
+	}
+	if value := r.URL.Query().Get("limit"); value != "" {
+		limit, err = strconv.Atoi(value)
+		if err != nil || limit < 1 || limit > 100 {
+			return db.ListOrdersForAdminParams{}, 0, 0, fmt.Errorf("invalid limit")
+		}
+	}
+
+	params := db.ListOrdersForAdminParams{
+		Search:     strings.TrimSpace(r.URL.Query().Get("search")),
+		Status:     strings.TrimSpace(r.URL.Query().Get("status")),
+		Source:     strings.TrimSpace(r.URL.Query().Get("source")),
+		PageOffset: int32((page - 1) * limit),
+		PageLimit:  int32(limit + 1),
+	}
+
+	for queryKey, target := range map[string]*pgtype.Timestamptz{
+		"from_date": &params.FromDate,
+		"to_date":   &params.ToDate,
+	} {
+		value := strings.TrimSpace(r.URL.Query().Get(queryKey))
+		if value == "" {
+			continue
+		}
+		parsed, parseErr := time.Parse("2006-01-02", value)
+		if parseErr != nil {
+			return db.ListOrdersForAdminParams{}, 0, 0, parseErr
+		}
+		if queryKey == "to_date" {
+			parsed = parsed.Add(24 * time.Hour)
+		}
+		*target = pgtype.Timestamptz{Time: parsed.UTC(), Valid: true}
+	}
+
+	if value := strings.TrimSpace(r.URL.Query().Get("courier_id")); value != "" {
+		courierID, parseErr := uuid.Parse(value)
+		if parseErr != nil {
+			return db.ListOrdersForAdminParams{}, 0, 0, parseErr
+		}
+		params.CourierID = pgtype.UUID{Bytes: courierID, Valid: true}
+	}
+
+	return params, page, limit, nil
+}
 func (h *Handler) GetOrder(w http.ResponseWriter, r *http.Request) {
 	orderID, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
@@ -217,11 +325,15 @@ func (h *Handler) ListOrders(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
+	params, page, limit, err := parseOrderListParams(r)
+	if err != nil {
+		api.WriteError(w, http.StatusBadRequest, "INVALID_ORDER_FILTER", "invalid order filter")
+		return
+	}
 
 	switch claims.Role {
 	case "superadmin", "admin":
-		orders, err := h.Queries.ListOrdersForAdmin(r.Context())
+		orders, err := h.Queries.ListOrdersForAdmin(r.Context(), params)
 		if err != nil {
 			api.WriteError(w, http.StatusInternalServerError, "ORDERS_FETCH_FAILED", "failed to list orders")
 			return
@@ -231,10 +343,15 @@ func (h *Handler) ListOrders(w http.ResponseWriter, r *http.Request) {
 			orders = []db.Order{}
 		}
 
-		writeOrdersJSON(w, orders, false)
+		writePaginatedOrdersJSON(w, orders, false, page, limit)
 
 	case "staff":
-		orders, err := h.Queries.ListOrdersForStaff(r.Context())
+		staffParams := db.ListOrdersForStaffParams{
+			Search: params.Search, Status: params.Status, FromDate: params.FromDate,
+			ToDate: params.ToDate, CourierID: params.CourierID, Source: params.Source,
+			PageOffset: params.PageOffset, PageLimit: params.PageLimit,
+		}
+		orders, err := h.Queries.ListOrdersForStaff(r.Context(), staffParams)
 		if err != nil {
 			api.WriteError(w, http.StatusInternalServerError, "ORDERS_FETCH_FAILED", "failed to list orders")
 			return
@@ -244,11 +361,55 @@ func (h *Handler) ListOrders(w http.ResponseWriter, r *http.Request) {
 			orders = []db.ListOrdersForStaffRow{}
 		}
 
-		writeOrdersJSON(w, orders, true)
+		writePaginatedOrdersJSON(w, orders, true, page, limit)
 
 	default:
 		api.WriteError(w, http.StatusForbidden, "FORBIDDEN", "forbidden")
 	}
+}
+
+func (h *Handler) GetOrderHistory(w http.ResponseWriter, r *http.Request) {
+	claims, ok := auth.GetClaims(r.Context())
+	if !ok {
+		api.WriteError(w, http.StatusUnauthorized, "UNAUTHORIZED", "unauthorized")
+		return
+	}
+	if claims.Role != "superadmin" && claims.Role != "admin" && claims.Role != "staff" {
+		api.WriteError(w, http.StatusForbidden, "FORBIDDEN", "forbidden")
+		return
+	}
+
+	orderID, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		api.WriteError(w, http.StatusBadRequest, "INVALID_ORDER_ID", "invalid order id")
+		return
+	}
+
+	history, err := h.Queries.ListOrderStatusHistory(r.Context(), pgtype.UUID{Bytes: orderID, Valid: true})
+	if err != nil {
+		api.WriteError(w, http.StatusInternalServerError, "ORDER_HISTORY_FETCH_FAILED", "failed to get order history")
+		return
+	}
+	if history == nil {
+		history = []db.ListOrderStatusHistoryRow{}
+	}
+
+	result := make([]map[string]any, 0, len(history))
+	for _, item := range history {
+		fromStatus := any(nil)
+		if item.FromStatus.Valid {
+			fromStatus = item.FromStatus.OrderStatus
+		}
+		result = append(result, map[string]any{
+			"id": item.ID, "order_id": item.OrderID, "from_status": fromStatus,
+			"to_status": item.ToStatus, "changed_by": item.ChangedBy,
+			"changed_by_name": item.ChangedByName, "changed_by_phone": item.ChangedByPhone,
+			"changed_at": item.ChangedAt,
+		})
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(result)
 }
 
 type updateOrderStatusRequest struct {

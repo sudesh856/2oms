@@ -299,6 +299,62 @@ func (q *Queries) GetOrderForStaff(ctx context.Context, id pgtype.UUID) (GetOrde
 	return i, err
 }
 
+const listOrderStatusHistory = `-- name: ListOrderStatusHistory :many
+SELECT
+        sh.id,
+        sh.order_id,
+        sh.from_status,
+        sh.to_status,
+        sh.changed_by,
+        sh.changed_at,
+        u.name AS changed_by_name,
+        u.phone AS changed_by_phone
+FROM status_history sh
+JOIN users u ON u.id = sh.changed_by
+WHERE sh.order_id = $1
+ORDER BY sh.changed_at ASC
+`
+
+type ListOrderStatusHistoryRow struct {
+	ID             pgtype.UUID
+	OrderID        pgtype.UUID
+	FromStatus     NullOrderStatus
+	ToStatus       OrderStatus
+	ChangedBy      pgtype.UUID
+	ChangedAt      pgtype.Timestamptz
+	ChangedByName  string
+	ChangedByPhone string
+}
+
+func (q *Queries) ListOrderStatusHistory(ctx context.Context, orderID pgtype.UUID) ([]ListOrderStatusHistoryRow, error) {
+	rows, err := q.db.Query(ctx, listOrderStatusHistory, orderID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListOrderStatusHistoryRow
+	for rows.Next() {
+		var i ListOrderStatusHistoryRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrderID,
+			&i.FromStatus,
+			&i.ToStatus,
+			&i.ChangedBy,
+			&i.ChangedAt,
+			&i.ChangedByName,
+			&i.ChangedByPhone,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listOrdersForAdmin = `-- name: ListOrdersForAdmin :many
 SELECT
     o.id,
@@ -314,11 +370,45 @@ SELECT
     o.created_at,
     o.updated_at
 FROM orders o
+JOIN customers c ON c.id = o.customer_id
+WHERE (
+        $1::text = ''
+        OR o.id::text ILIKE '%' || $1::text || '%'
+        OR c.name ILIKE '%' || $1::text || '%'
+        OR c.phone ILIKE '%' || $1::text || '%'
+)
+    AND ($2::text = '' OR o.status::text = $2::text)
+    AND ($3::timestamptz IS NULL OR o.created_at >= $3::timestamptz)
+    AND ($4::timestamptz IS NULL OR o.created_at < $4::timestamptz)
+    AND ($5::uuid IS NULL OR o.courier_id = $5::uuid)
+    AND ($6::text = '' OR o.source::text = $6::text)
 ORDER BY o.created_at DESC
+LIMIT $8
+OFFSET $7
 `
 
-func (q *Queries) ListOrdersForAdmin(ctx context.Context) ([]Order, error) {
-	rows, err := q.db.Query(ctx, listOrdersForAdmin)
+type ListOrdersForAdminParams struct {
+	Search     string
+	Status     string
+	FromDate   pgtype.Timestamptz
+	ToDate     pgtype.Timestamptz
+	CourierID  pgtype.UUID
+	Source     string
+	PageOffset int32
+	PageLimit  int32
+}
+
+func (q *Queries) ListOrdersForAdmin(ctx context.Context, arg ListOrdersForAdminParams) ([]Order, error) {
+	rows, err := q.db.Query(ctx, listOrdersForAdmin,
+		arg.Search,
+		arg.Status,
+		arg.FromDate,
+		arg.ToDate,
+		arg.CourierID,
+		arg.Source,
+		arg.PageOffset,
+		arg.PageLimit,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -364,8 +454,33 @@ SELECT
     o.created_at,
     o.updated_at
 FROM orders o
+JOIN customers c ON c.id = o.customer_id
+WHERE (
+        $1::text = ''
+        OR o.id::text ILIKE '%' || $1::text || '%'
+        OR c.name ILIKE '%' || $1::text || '%'
+        OR c.phone ILIKE '%' || $1::text || '%'
+)
+    AND ($2::text = '' OR o.status::text = $2::text)
+    AND ($3::timestamptz IS NULL OR o.created_at >= $3::timestamptz)
+    AND ($4::timestamptz IS NULL OR o.created_at < $4::timestamptz)
+    AND ($5::uuid IS NULL OR o.courier_id = $5::uuid)
+    AND ($6::text = '' OR o.source::text = $6::text)
 ORDER BY o.created_at DESC
+LIMIT $8
+OFFSET $7
 `
+
+type ListOrdersForStaffParams struct {
+	Search     string
+	Status     string
+	FromDate   pgtype.Timestamptz
+	ToDate     pgtype.Timestamptz
+	CourierID  pgtype.UUID
+	Source     string
+	PageOffset int32
+	PageLimit  int32
+}
 
 type ListOrdersForStaffRow struct {
 	ID           pgtype.UUID
@@ -381,8 +496,17 @@ type ListOrdersForStaffRow struct {
 	UpdatedAt    pgtype.Timestamptz
 }
 
-func (q *Queries) ListOrdersForStaff(ctx context.Context) ([]ListOrdersForStaffRow, error) {
-	rows, err := q.db.Query(ctx, listOrdersForStaff)
+func (q *Queries) ListOrdersForStaff(ctx context.Context, arg ListOrdersForStaffParams) ([]ListOrdersForStaffRow, error) {
+	rows, err := q.db.Query(ctx, listOrdersForStaff,
+		arg.Search,
+		arg.Status,
+		arg.FromDate,
+		arg.ToDate,
+		arg.CourierID,
+		arg.Source,
+		arg.PageOffset,
+		arg.PageLimit,
+	)
 	if err != nil {
 		return nil, err
 	}

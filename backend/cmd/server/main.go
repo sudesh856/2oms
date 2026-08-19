@@ -84,6 +84,7 @@ func main() {
 		r.With(auth.RequireRole("superadmin", "admin", "staff")).Get("/api/products/{id}", productHandler.GetProduct)
 		r.With(auth.RequireRole("superadmin", "admin")).Put("/api/products/{id}", productHandler.UpdateProduct)
 		r.With(auth.RequireRole("superadmin", "admin", "staff")).Get("/api/orders/{id}", orderHandler.GetOrder)
+		r.With(auth.RequireRole("superadmin", "admin", "staff")).Get("/api/orders/{id}/history", orderHandler.GetOrderHistory)
 		r.With(auth.RequireRole("superadmin", "admin", "staff")).Get("/api/orders", orderHandler.ListOrders)
 		r.With(auth.RequireRole("superadmin", "admin", "staff")).Post("/api/orders", orderHandler.CreateOrder)
 		r.With(auth.RequireRole("superadmin", "admin", "staff")).Patch("/api/orders/{id}/status", orderHandler.UpdateStatus)

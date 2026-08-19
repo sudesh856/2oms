@@ -61,6 +61,15 @@ type OrderItem = {
   price: unknown;
 };
 
+type StatusHistory = {
+  id: string;
+  from_status: string | null;
+  to_status: string;
+  changed_by_name: string;
+  changed_by_phone: string;
+  changed_at: string;
+};
+
 type CartItem = {
   product: Product;
   quantity: number;
@@ -1686,19 +1695,39 @@ function Orders() {
   const [orders, setOrders] = useState<Order[]>([]);
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("");
+  const [source, setSource] = useState("");
+  const [courierId, setCourierId] = useState("");
+  const [fromDate, setFromDate] = useState("");
+  const [toDate, setToDate] = useState("");
+  const [page, setPage] = useState(1);
+  const [hasNext, setHasNext] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
   useEffect(() => {
     async function load() {
+      const params = new URLSearchParams({
+        page: String(page),
+        limit: "25",
+      });
+      if (search.trim()) params.set("search", search.trim());
+      if (status) params.set("status", status);
+      if (source) params.set("source", source);
+      if (courierId.trim()) params.set("courier_id", courierId.trim());
+      if (fromDate) params.set("from_date", fromDate);
+      if (toDate) params.set("to_date", toDate);
+
+      setLoading(true);
       try {
-        const response = await apiFetch("/orders");
+        const response = await apiFetch(`/orders?${params.toString()}`);
 
         if (!response.ok) {
           throw new Error(await readError(response));
         }
 
-        setOrders(await response.json());
+        const data = await response.json();
+        setOrders(data.orders ?? []);
+        setHasNext(data.pagination?.has_next ?? false);
       } catch (err) {
         setError(
           err instanceof Error
@@ -1711,29 +1740,14 @@ function Orders() {
     }
 
     load();
-  }, []);
-
-  const filtered = orders.filter((order) => {
-    const matchesSearch =
-      !search ||
-      order.id.toLowerCase().includes(search.toLowerCase()) ||
-      order.customer_id
-        .toLowerCase()
-        .includes(search.toLowerCase()) ||
-      order.source.toLowerCase().includes(search.toLowerCase());
-
-    const matchesStatus =
-      !status || order.status === status;
-
-    return matchesSearch && matchesStatus;
-  });
+  }, [search, status, source, courierId, fromDate, toDate, page]);
 
   return (
     <Layout>
       <PageHeader
         eyebrow="Orders"
         title="Order management"
-        description={`${orders.length} total orders`}
+        description="Search and filter orders"
         action={
           <Link to="/orders/new" className="button primary">
             Create order
@@ -1746,12 +1760,12 @@ function Orders() {
           <input
             value={search}
             onChange={(event) => setSearch(event.target.value)}
-            placeholder="Search orders..."
+            placeholder="Search by order ID, name or phone..."
           />
 
           <select
             value={status}
-            onChange={(event) => setStatus(event.target.value)}
+            onChange={(event) => { setStatus(event.target.value); setPage(1); }}
           >
             <option value="">All statuses</option>
             <option value="confirmed">Confirmed</option>
@@ -1767,6 +1781,18 @@ function Orders() {
             <option value="cancelled">Cancelled</option>
             <option value="returned">Returned</option>
           </select>
+          <select value={source} onChange={(event) => { setSource(event.target.value); setPage(1); }}>
+            <option value="">All sources</option>
+            <option value="website">Website</option>
+            <option value="daraz">Daraz</option>
+            <option value="phone">Phone</option>
+            <option value="facebook">Facebook</option>
+            <option value="instagram">Instagram</option>
+            <option value="store">Store</option>
+          </select>
+          <input type="text" value={courierId} onChange={(event) => { setCourierId(event.target.value); setPage(1); }} placeholder="Courier ID" />
+          <label>From <input type="date" value={fromDate} onChange={(event) => { setFromDate(event.target.value); setPage(1); }} /></label>
+          <label>To <input type="date" value={toDate} onChange={(event) => { setToDate(event.target.value); setPage(1); }} /></label>
         </div>
       </div>
 
@@ -1775,7 +1801,7 @@ function Orders() {
       <div className="card table-card">
         {loading ? (
           <p className="muted">Loading orders...</p>
-        ) : filtered.length === 0 ? (
+        ) : orders.length === 0 ? (
           <EmptyState message="No orders found." />
         ) : (
           <div className="table-wrap">
@@ -1792,7 +1818,7 @@ function Orders() {
               </thead>
 
               <tbody>
-                {filtered.map((order) => (
+                {orders.map((order) => (
                   <tr key={order.id}>
                     <td>
                       <strong>{order.id.slice(0, 8)}</strong>
@@ -1818,6 +1844,11 @@ function Orders() {
           </div>
         )}
       </div>
+      <div className="pagination">
+        <button className="button" type="button" disabled={page === 1 || loading} onClick={() => setPage((value) => value - 1)}>Previous</button>
+        <span>Page {page}</span>
+        <button className="button" type="button" disabled={!hasNext || loading} onClick={() => setPage((value) => value + 1)}>Next</button>
+      </div>
     </Layout>
   );
 }
@@ -1830,6 +1861,7 @@ function OrderDetail() {
   const [items, setItems] = useState<OrderItem[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [customer, setCustomer] = useState<Customer | null>(null);
+  const [history, setHistory] = useState<StatusHistory[]>([]);
   const [newStatus, setNewStatus] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -1874,6 +1906,11 @@ function OrderDetail() {
 
       if (productsResponse.ok) {
         setProducts(await productsResponse.json());
+      }
+
+      const historyResponse = await apiFetch(`/orders/${id}/history`);
+      if (historyResponse.ok) {
+        setHistory(await historyResponse.json());
       }
     } catch (err) {
       setError(
@@ -1967,12 +2004,12 @@ function OrderDetail() {
                   <strong>{order.source}</strong>
                 </div>
 
-                <div>
-                  <span>COD</span>
-                  <strong>
-                    Rs. {money(order.cod_amount)}
-                  </strong>
-                </div>
+                {role !== "staff" && (
+                  <div>
+                    <span>COD</span>
+                    <strong>Rs. {money(order.cod_amount)}</strong>
+                  </div>
+                )}
 
                 <div>
                   <span>Store visit</span>
@@ -1986,6 +2023,30 @@ function OrderDetail() {
                   <strong>{order.address}</strong>
                 </div>
               </div>
+            </section>
+
+            <section className="card">
+              <div className="section-heading">
+                <div>
+                  <span className="eyebrow">History</span>
+                  <h2>Status changes</h2>
+                </div>
+              </div>
+              {history.length === 0 ? (
+                <p className="muted">No status history recorded.</p>
+              ) : (
+                <div className="compact-list">
+                  {history.map((entry) => (
+                    <div className="compact-row" key={entry.id}>
+                      <div>
+                        <strong>{entry.from_status ? `${statusLabel(entry.from_status)} -> ` : ""}{statusLabel(entry.to_status)}</strong>
+                        <span>{entry.changed_by_name} ({entry.changed_by_phone})</span>
+                      </div>
+                      <span>{formatDate(entry.changed_at)}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
             </section>
 
             <section className="card">
