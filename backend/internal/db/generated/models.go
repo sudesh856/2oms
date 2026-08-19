@@ -198,6 +198,7 @@ type Order struct {
 	CreatedBy    pgtype.UUID
 	CreatedAt    pgtype.Timestamptz
 	UpdatedAt    pgtype.Timestamptz
+	IsLegacy     bool
 }
 
 type OrderItem struct {

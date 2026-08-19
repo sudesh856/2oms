@@ -11,38 +11,60 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const createLegacyOrder = `-- name: CreateLegacyOrder :one
+INSERT INTO orders (customer_id, source, status, address, cod_amount, is_store_visit,
+                    created_by, created_at, is_legacy)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, TRUE)
+RETURNING id, customer_id, source, status, courier_id, location_id, address,
+          cod_amount, is_store_visit, created_by, created_at, updated_at, is_legacy
+`
+
+type CreateLegacyOrderParams struct {
+	CustomerID   pgtype.UUID
+	Source       OrderSource
+	Status       OrderStatus
+	Address      string
+	CodAmount    pgtype.Numeric
+	IsStoreVisit bool
+	CreatedBy    pgtype.UUID
+	CreatedAt    pgtype.Timestamptz
+}
+
+func (q *Queries) CreateLegacyOrder(ctx context.Context, arg CreateLegacyOrderParams) (Order, error) {
+	row := q.db.QueryRow(ctx, createLegacyOrder,
+		arg.CustomerID,
+		arg.Source,
+		arg.Status,
+		arg.Address,
+		arg.CodAmount,
+		arg.IsStoreVisit,
+		arg.CreatedBy,
+		arg.CreatedAt,
+	)
+	var i Order
+	err := row.Scan(
+		&i.ID,
+		&i.CustomerID,
+		&i.Source,
+		&i.Status,
+		&i.CourierID,
+		&i.LocationID,
+		&i.Address,
+		&i.CodAmount,
+		&i.IsStoreVisit,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.IsLegacy,
+	)
+	return i, err
+}
+
 const createOrderForAdmin = `-- name: CreateOrderForAdmin :one
-INSERT INTO orders (
-    customer_id,
-    source,
-    status,
-    address,
-    cod_amount,
-    is_store_visit,
-    created_by
-)
-VALUES (
-    $1,
-    $2,
-    $3,
-    $4,
-    $5,
-    $6,
-    $7
-)
-RETURNING
-    id,
-    customer_id,
-    source,
-    status,
-    courier_id,
-    location_id,
-    address,
-    cod_amount,
-    is_store_visit,
-    created_by,
-    created_at,
-    updated_at
+INSERT INTO orders (customer_id, source, status, address, cod_amount, is_store_visit, created_by)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
+RETURNING id, customer_id, source, status, courier_id, location_id, address,
+          cod_amount, is_store_visit, created_by, created_at, updated_at, is_legacy
 `
 
 type CreateOrderForAdminParams struct {
@@ -79,39 +101,16 @@ func (q *Queries) CreateOrderForAdmin(ctx context.Context, arg CreateOrderForAdm
 		&i.CreatedBy,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.IsLegacy,
 	)
 	return i, err
 }
 
 const createOrderForStaff = `-- name: CreateOrderForStaff :one
-INSERT INTO orders (
-    customer_id,
-    source,
-    status,
-    address,
-    is_store_visit,
-    created_by
-)
-VALUES (
-    $1,
-    $2,
-    $3,
-    $4,
-    $5,
-    $6
-)
-RETURNING
-    id,
-    customer_id,
-    source,
-    status,
-    courier_id,
-    location_id,
-    address,
-    is_store_visit,
-    created_by,
-    created_at,
-    updated_at
+INSERT INTO orders (customer_id, source, status, address, is_store_visit, created_by)
+VALUES ($1, $2, $3, $4, $5, $6)
+RETURNING id, customer_id, source, status, courier_id, location_id, address,
+          is_store_visit, created_by, created_at, updated_at, is_legacy
 `
 
 type CreateOrderForStaffParams struct {
@@ -135,6 +134,7 @@ type CreateOrderForStaffRow struct {
 	CreatedBy    pgtype.UUID
 	CreatedAt    pgtype.Timestamptz
 	UpdatedAt    pgtype.Timestamptz
+	IsLegacy     bool
 }
 
 func (q *Queries) CreateOrderForStaff(ctx context.Context, arg CreateOrderForStaffParams) (CreateOrderForStaffRow, error) {
@@ -159,30 +159,15 @@ func (q *Queries) CreateOrderForStaff(ctx context.Context, arg CreateOrderForSta
 		&i.CreatedBy,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.IsLegacy,
 	)
 	return i, err
 }
 
 const createStatusHistory = `-- name: CreateStatusHistory :one
-INSERT INTO status_history (
-    order_id,
-    from_status,
-    to_status,
-    changed_by
-)
-VALUES (
-    $1,
-    $2,
-    $3,
-    $4
-)
-RETURNING
-    id,
-    order_id,
-    from_status,
-    to_status,
-    changed_by,
-    changed_at
+INSERT INTO status_history (order_id, from_status, to_status, changed_by)
+VALUES ($1, $2, $3, $4)
+RETURNING id, order_id, from_status, to_status, changed_by, changed_at
 `
 
 type CreateStatusHistoryParams struct {
@@ -212,21 +197,10 @@ func (q *Queries) CreateStatusHistory(ctx context.Context, arg CreateStatusHisto
 }
 
 const getOrderForAdmin = `-- name: GetOrderForAdmin :one
-SELECT
-    o.id,
-    o.customer_id,
-    o.source,
-    o.status,
-    o.courier_id,
-    o.location_id,
-    o.address,
-    o.cod_amount,
-    o.is_store_visit,
-    o.created_by,
-    o.created_at,
-    o.updated_at
-FROM orders o
-WHERE o.id = $1
+SELECT o.id, o.customer_id, o.source, o.status, o.courier_id, o.location_id,
+       o.address, o.cod_amount, o.is_store_visit, o.created_by, o.created_at,
+       o.updated_at, o.is_legacy
+FROM orders o WHERE o.id = $1
 `
 
 func (q *Queries) GetOrderForAdmin(ctx context.Context, id pgtype.UUID) (Order, error) {
@@ -245,25 +219,16 @@ func (q *Queries) GetOrderForAdmin(ctx context.Context, id pgtype.UUID) (Order, 
 		&i.CreatedBy,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.IsLegacy,
 	)
 	return i, err
 }
 
 const getOrderForStaff = `-- name: GetOrderForStaff :one
-SELECT
-    o.id,
-    o.customer_id,
-    o.source,
-    o.status,
-    o.courier_id,
-    o.location_id,
-    o.address,
-    o.is_store_visit,
-    o.created_by,
-    o.created_at,
-    o.updated_at
-FROM orders o
-WHERE o.id = $1
+SELECT o.id, o.customer_id, o.source, o.status, o.courier_id, o.location_id,
+       o.address, o.is_store_visit, o.created_by, o.created_at,
+       o.updated_at, o.is_legacy
+FROM orders o WHERE o.id = $1
 `
 
 type GetOrderForStaffRow struct {
@@ -278,6 +243,7 @@ type GetOrderForStaffRow struct {
 	CreatedBy    pgtype.UUID
 	CreatedAt    pgtype.Timestamptz
 	UpdatedAt    pgtype.Timestamptz
+	IsLegacy     bool
 }
 
 func (q *Queries) GetOrderForStaff(ctx context.Context, id pgtype.UUID) (GetOrderForStaffRow, error) {
@@ -295,26 +261,16 @@ func (q *Queries) GetOrderForStaff(ctx context.Context, id pgtype.UUID) (GetOrde
 		&i.CreatedBy,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.IsLegacy,
 	)
 	return i, err
 }
 
 const listOrdersForAdmin = `-- name: ListOrdersForAdmin :many
-SELECT
-    o.id,
-    o.customer_id,
-    o.source,
-    o.status,
-    o.courier_id,
-    o.location_id,
-    o.address,
-    o.cod_amount,
-    o.is_store_visit,
-    o.created_by,
-    o.created_at,
-    o.updated_at
-FROM orders o
-ORDER BY o.created_at DESC
+SELECT o.id, o.customer_id, o.source, o.status, o.courier_id, o.location_id,
+       o.address, o.cod_amount, o.is_store_visit, o.created_by, o.created_at,
+       o.updated_at, o.is_legacy
+FROM orders o ORDER BY o.created_at DESC
 `
 
 func (q *Queries) ListOrdersForAdmin(ctx context.Context) ([]Order, error) {
@@ -339,6 +295,7 @@ func (q *Queries) ListOrdersForAdmin(ctx context.Context) ([]Order, error) {
 			&i.CreatedBy,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.IsLegacy,
 		); err != nil {
 			return nil, err
 		}
@@ -351,20 +308,10 @@ func (q *Queries) ListOrdersForAdmin(ctx context.Context) ([]Order, error) {
 }
 
 const listOrdersForStaff = `-- name: ListOrdersForStaff :many
-SELECT
-    o.id,
-    o.customer_id,
-    o.source,
-    o.status,
-    o.courier_id,
-    o.location_id,
-    o.address,
-    o.is_store_visit,
-    o.created_by,
-    o.created_at,
-    o.updated_at
-FROM orders o
-ORDER BY o.created_at DESC
+SELECT o.id, o.customer_id, o.source, o.status, o.courier_id, o.location_id,
+       o.address, o.is_store_visit, o.created_by, o.created_at,
+       o.updated_at, o.is_legacy
+FROM orders o ORDER BY o.created_at DESC
 `
 
 type ListOrdersForStaffRow struct {
@@ -379,6 +326,7 @@ type ListOrdersForStaffRow struct {
 	CreatedBy    pgtype.UUID
 	CreatedAt    pgtype.Timestamptz
 	UpdatedAt    pgtype.Timestamptz
+	IsLegacy     bool
 }
 
 func (q *Queries) ListOrdersForStaff(ctx context.Context) ([]ListOrdersForStaffRow, error) {
@@ -402,6 +350,7 @@ func (q *Queries) ListOrdersForStaff(ctx context.Context) ([]ListOrdersForStaffR
 			&i.CreatedBy,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.IsLegacy,
 		); err != nil {
 			return nil, err
 		}
@@ -414,25 +363,10 @@ func (q *Queries) ListOrdersForStaff(ctx context.Context) ([]ListOrdersForStaffR
 }
 
 const updateOrderStatus = `-- name: UpdateOrderStatus :one
-UPDATE orders
-SET
-    status = $2,
-    updated_at = NOW()
-WHERE id = $1
-  AND status = $3
-RETURNING
-    id,
-    customer_id,
-    source,
-    status,
-    courier_id,
-    location_id,
-    address,
-    cod_amount,
-    is_store_visit,
-    created_by,
-    created_at,
-    updated_at
+UPDATE orders SET status = $2, updated_at = NOW()
+WHERE id = $1 AND status = $3
+RETURNING id, customer_id, source, status, courier_id, location_id, address,
+          cod_amount, is_store_visit, created_by, created_at, updated_at, is_legacy
 `
 
 type UpdateOrderStatusParams struct {
@@ -457,6 +391,7 @@ func (q *Queries) UpdateOrderStatus(ctx context.Context, arg UpdateOrderStatusPa
 		&i.CreatedBy,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.IsLegacy,
 	)
 	return i, err
 }

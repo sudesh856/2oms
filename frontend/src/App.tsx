@@ -51,6 +51,7 @@ type Order = {
   created_by: string;
   created_at: string;
   updated_at: string;
+  is_legacy?: boolean;
 };
 
 type OrderItem = {
@@ -1820,6 +1821,7 @@ function Orders() {
                   <tr key={order.id}>
                     <td>
                       <strong>{order.id.slice(0, 8)}</strong>
+                      {order.is_legacy && <LegacyBadge />}
                     </td>
                     <td>{order.source}</td>
                     <td>
@@ -2007,6 +2009,7 @@ function OrderDetail() {
                 <div>
                   <span className="eyebrow">Order</span>
                   <h2>Details</h2>
+                  {order.is_legacy && <LegacyBadge />}
                 </div>
 
                 <StatusBadge status={order.status} />
@@ -2489,4 +2492,8 @@ export default function App() {
       </Routes>
     </BrowserRouter>
   );
+}
+
+function LegacyBadge() {
+  return <span className="status legacy-badge">Legacy</span>;
 }
