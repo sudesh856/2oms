@@ -66,6 +66,21 @@ body {
   margin: 0;
 }
 
+.status-green {
+  color: #166534;
+  background: #dcfce7;
+}
+
+.status-amber {
+  color: #92400e;
+  background: #fef3c7;
+}
+
+.status-red {
+  color: #991b1b;
+  background: #fee2e2;
+}
+
 h1,
 h2 {
   font-family: var(--heading);

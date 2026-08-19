@@ -2,8 +2,11 @@ package orders
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
+	"time"
 
 	"oms-backend/internal/api"
 	"oms-backend/internal/auth"
@@ -263,12 +266,17 @@ func (h *Handler) ListOrders(w http.ResponseWriter, r *http.Request) {
 		api.WriteError(w, http.StatusUnauthorized, "UNAUTHORIZED", "unauthorized")
 		return
 	}
+	params, err := parseOrderFilters(r)
+	if err != nil {
+		api.WriteError(w, http.StatusBadRequest, "INVALID_ORDER_FILTER", "invalid order filter")
+		return
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 
 	switch claims.Role {
 	case "superadmin", "admin":
-		orders, err := h.Queries.ListOrdersForAdmin(r.Context())
+		orders, err := h.Queries.ListOrdersForAdmin(r.Context(), params)
 		if err != nil {
 			api.WriteError(w, http.StatusInternalServerError, "ORDERS_FETCH_FAILED", "failed to list orders")
 			return
@@ -281,7 +289,12 @@ func (h *Handler) ListOrders(w http.ResponseWriter, r *http.Request) {
 		writeOrdersJSON(w, orders, false)
 
 	case "staff":
-		orders, err := h.Queries.ListOrdersForStaff(r.Context())
+		staffParams := db.ListOrdersForStaffParams{
+			Column1: params.Column1, Column2: params.Column2, Column3: params.Column3,
+			Column4: params.Column4, Column5: params.Column5, Column6: params.Column6,
+			Column7: params.Column7, Offset: params.Offset, Limit: params.Limit,
+		}
+		orders, err := h.Queries.ListOrdersForStaff(r.Context(), staffParams)
 		if err != nil {
 			api.WriteError(w, http.StatusInternalServerError, "ORDERS_FETCH_FAILED", "failed to list orders")
 			return
@@ -296,6 +309,56 @@ func (h *Handler) ListOrders(w http.ResponseWriter, r *http.Request) {
 	default:
 		api.WriteError(w, http.StatusForbidden, "FORBIDDEN", "forbidden")
 	}
+}
+
+func parseOrderFilters(r *http.Request) (db.ListOrdersForAdminParams, error) {
+	params := db.ListOrdersForAdminParams{Limit: 100}
+	params.Column1 = strings.TrimSpace(r.URL.Query().Get("search"))
+	params.Column2 = strings.TrimSpace(r.URL.Query().Get("status"))
+	params.Column6 = strings.TrimSpace(r.URL.Query().Get("source"))
+	if value := r.URL.Query().Get("limit"); value != "" {
+		limit, err := strconv.Atoi(value)
+		if err != nil || limit < 1 || limit > 500 {
+			return params, fmt.Errorf("invalid limit")
+		}
+		params.Limit = int32(limit)
+	}
+	if value := r.URL.Query().Get("offset"); value != "" {
+		offset, err := strconv.Atoi(value)
+		if err != nil || offset < 0 {
+			return params, fmt.Errorf("invalid offset")
+		}
+		params.Offset = int32(offset)
+	}
+	for key, target := range map[string]*pgtype.Timestamptz{"from_date": &params.Column3, "to_date": &params.Column4} {
+		value := strings.TrimSpace(r.URL.Query().Get(key))
+		if value == "" {
+			continue
+		}
+		parsed, err := time.Parse("2006-01-02", value)
+		if err != nil {
+			return params, err
+		}
+		if key == "to_date" {
+			parsed = parsed.Add(24 * time.Hour)
+		}
+		*target = pgtype.Timestamptz{Time: parsed.UTC(), Valid: true}
+	}
+	if value := strings.TrimSpace(r.URL.Query().Get("courier_id")); value != "" {
+		parsed, err := uuid.Parse(value)
+		if err != nil {
+			return params, err
+		}
+		params.Column5 = pgtype.UUID{Bytes: parsed, Valid: true}
+	}
+	if value := strings.TrimSpace(r.URL.Query().Get("customer_id")); value != "" {
+		parsed, err := uuid.Parse(value)
+		if err != nil {
+			return params, err
+		}
+		params.Column7 = pgtype.UUID{Bytes: parsed, Valid: true}
+	}
+	return params, nil
 }
 
 type updateOrderStatusRequest struct {

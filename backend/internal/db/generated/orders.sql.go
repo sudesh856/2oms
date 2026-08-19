@@ -266,15 +266,143 @@ func (q *Queries) GetOrderForStaff(ctx context.Context, id pgtype.UUID) (GetOrde
 	return i, err
 }
 
+const listCustomerOrdersForAdmin = `-- name: ListCustomerOrdersForAdmin :many
+SELECT o.id, o.customer_id, o.source, o.status, o.courier_id, o.location_id,
+       o.address, o.cod_amount, o.is_store_visit, o.created_by, o.created_at,
+       o.updated_at, o.is_legacy
+FROM orders o WHERE o.customer_id = $1 ORDER BY o.created_at DESC
+`
+
+func (q *Queries) ListCustomerOrdersForAdmin(ctx context.Context, customerID pgtype.UUID) ([]Order, error) {
+	rows, err := q.db.Query(ctx, listCustomerOrdersForAdmin, customerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Order
+	for rows.Next() {
+		var i Order
+		if err := rows.Scan(
+			&i.ID,
+			&i.CustomerID,
+			&i.Source,
+			&i.Status,
+			&i.CourierID,
+			&i.LocationID,
+			&i.Address,
+			&i.CodAmount,
+			&i.IsStoreVisit,
+			&i.CreatedBy,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.IsLegacy,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listCustomerOrdersForStaff = `-- name: ListCustomerOrdersForStaff :many
+SELECT o.id, o.customer_id, o.source, o.status, o.courier_id, o.location_id,
+       o.address, o.is_store_visit, o.created_by, o.created_at,
+       o.updated_at, o.is_legacy
+FROM orders o WHERE o.customer_id = $1 ORDER BY o.created_at DESC
+`
+
+type ListCustomerOrdersForStaffRow struct {
+	ID           pgtype.UUID
+	CustomerID   pgtype.UUID
+	Source       OrderSource
+	Status       OrderStatus
+	CourierID    pgtype.UUID
+	LocationID   pgtype.UUID
+	Address      string
+	IsStoreVisit bool
+	CreatedBy    pgtype.UUID
+	CreatedAt    pgtype.Timestamptz
+	UpdatedAt    pgtype.Timestamptz
+	IsLegacy     bool
+}
+
+func (q *Queries) ListCustomerOrdersForStaff(ctx context.Context, customerID pgtype.UUID) ([]ListCustomerOrdersForStaffRow, error) {
+	rows, err := q.db.Query(ctx, listCustomerOrdersForStaff, customerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListCustomerOrdersForStaffRow
+	for rows.Next() {
+		var i ListCustomerOrdersForStaffRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.CustomerID,
+			&i.Source,
+			&i.Status,
+			&i.CourierID,
+			&i.LocationID,
+			&i.Address,
+			&i.IsStoreVisit,
+			&i.CreatedBy,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.IsLegacy,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listOrdersForAdmin = `-- name: ListOrdersForAdmin :many
 SELECT o.id, o.customer_id, o.source, o.status, o.courier_id, o.location_id,
        o.address, o.cod_amount, o.is_store_visit, o.created_by, o.created_at,
        o.updated_at, o.is_legacy
-FROM orders o ORDER BY o.created_at DESC
+FROM orders o
+JOIN customers c ON c.id = o.customer_id
+WHERE ($1::text = '' OR o.id::text ILIKE '%' || $1::text || '%' OR c.name ILIKE '%' || $1::text || '%' OR c.phone ILIKE '%' || $1::text || '%')
+  AND ($2::text = '' OR o.status::text = $2::text)
+  AND ($3::timestamptz IS NULL OR o.created_at >= $3::timestamptz)
+  AND ($4::timestamptz IS NULL OR o.created_at < $4::timestamptz)
+  AND ($5::uuid IS NULL OR o.courier_id = $5::uuid)
+  AND ($6::text = '' OR o.source::text = $6::text)
+  AND ($7::uuid IS NULL OR o.customer_id = $7::uuid)
+ORDER BY o.created_at DESC
+LIMIT $9 OFFSET $8
 `
 
-func (q *Queries) ListOrdersForAdmin(ctx context.Context) ([]Order, error) {
-	rows, err := q.db.Query(ctx, listOrdersForAdmin)
+type ListOrdersForAdminParams struct {
+	Column1 string
+	Column2 string
+	Column3 pgtype.Timestamptz
+	Column4 pgtype.Timestamptz
+	Column5 pgtype.UUID
+	Column6 string
+	Column7 pgtype.UUID
+	Offset  int32
+	Limit   int32
+}
+
+func (q *Queries) ListOrdersForAdmin(ctx context.Context, arg ListOrdersForAdminParams) ([]Order, error) {
+	rows, err := q.db.Query(ctx, listOrdersForAdmin,
+		arg.Column1,
+		arg.Column2,
+		arg.Column3,
+		arg.Column4,
+		arg.Column5,
+		arg.Column6,
+		arg.Column7,
+		arg.Offset,
+		arg.Limit,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -311,8 +439,30 @@ const listOrdersForStaff = `-- name: ListOrdersForStaff :many
 SELECT o.id, o.customer_id, o.source, o.status, o.courier_id, o.location_id,
        o.address, o.is_store_visit, o.created_by, o.created_at,
        o.updated_at, o.is_legacy
-FROM orders o ORDER BY o.created_at DESC
+FROM orders o
+JOIN customers c ON c.id = o.customer_id
+WHERE ($1::text = '' OR o.id::text ILIKE '%' || $1::text || '%' OR c.name ILIKE '%' || $1::text || '%' OR c.phone ILIKE '%' || $1::text || '%')
+  AND ($2::text = '' OR o.status::text = $2::text)
+  AND ($3::timestamptz IS NULL OR o.created_at >= $3::timestamptz)
+  AND ($4::timestamptz IS NULL OR o.created_at < $4::timestamptz)
+  AND ($5::uuid IS NULL OR o.courier_id = $5::uuid)
+  AND ($6::text = '' OR o.source::text = $6::text)
+  AND ($7::uuid IS NULL OR o.customer_id = $7::uuid)
+ORDER BY o.created_at DESC
+LIMIT $9 OFFSET $8
 `
+
+type ListOrdersForStaffParams struct {
+	Column1 string
+	Column2 string
+	Column3 pgtype.Timestamptz
+	Column4 pgtype.Timestamptz
+	Column5 pgtype.UUID
+	Column6 string
+	Column7 pgtype.UUID
+	Offset  int32
+	Limit   int32
+}
 
 type ListOrdersForStaffRow struct {
 	ID           pgtype.UUID
@@ -329,8 +479,18 @@ type ListOrdersForStaffRow struct {
 	IsLegacy     bool
 }
 
-func (q *Queries) ListOrdersForStaff(ctx context.Context) ([]ListOrdersForStaffRow, error) {
-	rows, err := q.db.Query(ctx, listOrdersForStaff)
+func (q *Queries) ListOrdersForStaff(ctx context.Context, arg ListOrdersForStaffParams) ([]ListOrdersForStaffRow, error) {
+	rows, err := q.db.Query(ctx, listOrdersForStaff,
+		arg.Column1,
+		arg.Column2,
+		arg.Column3,
+		arg.Column4,
+		arg.Column5,
+		arg.Column6,
+		arg.Column7,
+		arg.Offset,
+		arg.Limit,
+	)
 	if err != nil {
 		return nil, err
 	}

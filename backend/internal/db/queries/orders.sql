@@ -25,13 +25,45 @@ RETURNING id, order_id, from_status, to_status, changed_by, changed_at;
 SELECT o.id, o.customer_id, o.source, o.status, o.courier_id, o.location_id,
        o.address, o.cod_amount, o.is_store_visit, o.created_by, o.created_at,
        o.updated_at, o.is_legacy
-FROM orders o ORDER BY o.created_at DESC;
+FROM orders o
+JOIN customers c ON c.id = o.customer_id
+WHERE ($1::text = '' OR o.id::text ILIKE '%' || $1::text || '%' OR c.name ILIKE '%' || $1::text || '%' OR c.phone ILIKE '%' || $1::text || '%')
+  AND ($2::text = '' OR o.status::text = $2::text)
+  AND ($3::timestamptz IS NULL OR o.created_at >= $3::timestamptz)
+  AND ($4::timestamptz IS NULL OR o.created_at < $4::timestamptz)
+  AND ($5::uuid IS NULL OR o.courier_id = $5::uuid)
+  AND ($6::text = '' OR o.source::text = $6::text)
+  AND ($7::uuid IS NULL OR o.customer_id = $7::uuid)
+ORDER BY o.created_at DESC
+LIMIT $9 OFFSET $8;
 
 -- name: ListOrdersForStaff :many
 SELECT o.id, o.customer_id, o.source, o.status, o.courier_id, o.location_id,
        o.address, o.is_store_visit, o.created_by, o.created_at,
        o.updated_at, o.is_legacy
-FROM orders o ORDER BY o.created_at DESC;
+FROM orders o
+JOIN customers c ON c.id = o.customer_id
+WHERE ($1::text = '' OR o.id::text ILIKE '%' || $1::text || '%' OR c.name ILIKE '%' || $1::text || '%' OR c.phone ILIKE '%' || $1::text || '%')
+  AND ($2::text = '' OR o.status::text = $2::text)
+  AND ($3::timestamptz IS NULL OR o.created_at >= $3::timestamptz)
+  AND ($4::timestamptz IS NULL OR o.created_at < $4::timestamptz)
+  AND ($5::uuid IS NULL OR o.courier_id = $5::uuid)
+  AND ($6::text = '' OR o.source::text = $6::text)
+  AND ($7::uuid IS NULL OR o.customer_id = $7::uuid)
+ORDER BY o.created_at DESC
+LIMIT $9 OFFSET $8;
+
+-- name: ListCustomerOrdersForAdmin :many
+SELECT o.id, o.customer_id, o.source, o.status, o.courier_id, o.location_id,
+       o.address, o.cod_amount, o.is_store_visit, o.created_by, o.created_at,
+       o.updated_at, o.is_legacy
+FROM orders o WHERE o.customer_id = $1 ORDER BY o.created_at DESC;
+
+-- name: ListCustomerOrdersForStaff :many
+SELECT o.id, o.customer_id, o.source, o.status, o.courier_id, o.location_id,
+       o.address, o.is_store_visit, o.created_by, o.created_at,
+       o.updated_at, o.is_legacy
+FROM orders o WHERE o.customer_id = $1 ORDER BY o.created_at DESC;
 
 -- name: CreateOrderForAdmin :one
 INSERT INTO orders (customer_id, source, status, address, cod_amount, is_store_visit, created_by)

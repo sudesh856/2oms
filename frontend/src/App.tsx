@@ -82,6 +82,15 @@ type CourierLocation = {
   delivery_charge?: unknown;
 };
 
+type DashboardSummary = {
+  today_orders: number;
+  pending_confirmations: number;
+  problem_orders: number;
+  total_orders: number;
+  status_counts: Array<{ status: string; count: number }>;
+  courier_counts: Array<{ courier_name?: string | null; count: number }>;
+};
+
 type CartItem = {
   product: Product;
   quantity: number;
@@ -175,6 +184,7 @@ function Login() {
   const [phone, setPhone] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
+
   const [loading, setLoading] = useState(false);
 
   async function handleLogin(event: React.FormEvent) {
@@ -332,31 +342,30 @@ function Layout({ children }: { children: React.ReactNode }) {
 
 function Dashboard() {
   const [orders, setOrders] = useState<Order[]>([]);
-  const [customers, setCustomers] = useState<Customer[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
+  const [summary, setSummary] = useState<DashboardSummary | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     async function load() {
       try {
-        const [ordersResponse, customersResponse, productsResponse] =
+        const [ordersResponse, productsResponse, summaryResponse] =
           await Promise.all([
             apiFetch("/orders"),
-            apiFetch("/customers"),
             apiFetch("/products"),
+            apiFetch("/dashboard/summary"),
           ]);
 
         if (
           !ordersResponse.ok ||
-          !customersResponse.ok ||
           !productsResponse.ok
         ) {
           throw new Error("Failed to load dashboard");
         }
 
         setOrders(await ordersResponse.json());
-        setCustomers(await customersResponse.json());
         setProducts(await productsResponse.json());
+        if (summaryResponse.ok) setSummary(await summaryResponse.json());
       } catch {
         // Individual pages expose detailed errors.
       } finally {
@@ -370,10 +379,6 @@ function Dashboard() {
   const activeOrders = orders.filter(
     (order) =>
       !["delivered", "cancelled", "returned"].includes(order.status)
-  ).length;
-
-  const lowStock = products.filter(
-    (product) => product.available_qty <= 5
   ).length;
 
   return (
@@ -390,25 +395,35 @@ function Dashboard() {
         <>
           <section className="stats-grid">
             <StatCard
+              label="Today's orders"
+              value={summary?.today_orders ?? orders.length}
+              href="/orders"
+            />
+            <StatCard
+              label="Pending confirmations"
+              value={summary?.pending_confirmations ?? activeOrders}
+              href="/orders"
+            />
+            <StatCard
+              label="Follow-up / problem"
+              value={summary?.problem_orders ?? 0}
+              href="/orders/problems"
+            />
+            <StatCard
               label="Total orders"
-              value={orders.length}
+              value={summary?.total_orders ?? orders.length}
               href="/orders"
             />
-            <StatCard
-              label="Active orders"
-              value={activeOrders}
-              href="/orders"
-            />
-            <StatCard
-              label="Customers"
-              value={customers.length}
-              href="/customers"
-            />
-            <StatCard
-              label="Low stock"
-              value={lowStock}
-              href="/products"
-            />
+          </section>
+
+          <section className="card">
+            <div className="section-heading">
+              <div><span className="eyebrow">Pipeline</span><h2>Current status counts</h2></div>
+              <Link to="/orders/problems" className="text-link">Problem orders</Link>
+            </div>
+            <div className="compact-list">
+              {(summary?.status_counts ?? []).map((item) => <div className="compact-row" key={item.status}><StatusBadge status={item.status} /><strong>{item.count}</strong></div>)}
+            </div>
           </section>
 
           <section className="dashboard-grid">
@@ -766,6 +781,7 @@ function CustomerForm() {
 function CustomerDetail() {
   const { id } = useParams();
   const [customer, setCustomer] = useState<Customer | null>(null);
+  const [orders, setOrders] = useState<Order[]>([]);
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -780,6 +796,9 @@ function CustomerDetail() {
         }
 
         setCustomer(await response.json());
+
+        const historyResponse = await apiFetch(`/customers/${id}/history`);
+        if (historyResponse.ok) setOrders(await historyResponse.json());
       } catch (err) {
         setError(
           err instanceof Error
@@ -822,6 +841,12 @@ function CustomerDetail() {
                 <strong>{customer.address || "—"}</strong>
               </div>
             </div>
+          </div>
+
+          <div className="card table-card">
+            <span className="eyebrow">History</span>
+            <h2>Orders for this customer</h2>
+            {orders.length === 0 ? <p className="muted">No orders found.</p> : <div className="compact-list">{orders.map((order) => <Link className="compact-row" to={`/orders/${order.id}`} key={order.id}><strong>{order.id.slice(0, 8)}</strong><StatusBadge status={order.status} /><span>{formatDate(order.created_at)}</span></Link>)}</div>}
           </div>
 
           <div className="card">
@@ -1708,16 +1733,43 @@ function CreateOrder() {
 }
 
 function Orders() {
+  const role = getRole();
   const [orders, setOrders] = useState<Order[]>([]);
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("");
+  const [source, setSource] = useState("");
+  const [courierID, setCourierID] = useState("");
+  const [customerID, setCustomerID] = useState("");
+  const [fromDate, setFromDate] = useState("");
+  const [toDate, setToDate] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+
+  async function exportOrders() {
+    const params = new URLSearchParams({ status, search, source, courier_id: courierID, customer_id: customerID, from_date: fromDate, to_date: toDate });
+    const response = await apiFetch(`/reports/orders.csv?${params.toString()}`);
+    if (!response.ok) { setError(await readError(response)); return; }
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "orders.csv";
+    link.click();
+    URL.revokeObjectURL(url);
+  }
 
   useEffect(() => {
     async function load() {
       try {
-        const response = await apiFetch("/orders");
+        const params = new URLSearchParams();
+        if (search) params.set("search", search);
+        if (status) params.set("status", status);
+        if (source) params.set("source", source);
+        if (courierID) params.set("courier_id", courierID);
+        if (customerID) params.set("customer_id", customerID);
+        if (fromDate) params.set("from_date", fromDate);
+        if (toDate) params.set("to_date", toDate);
+        const response = await apiFetch(`/orders?${params.toString()}`);
 
         if (!response.ok) {
           throw new Error(await readError(response));
@@ -1736,22 +1788,7 @@ function Orders() {
     }
 
     load();
-  }, []);
-
-  const filtered = orders.filter((order) => {
-    const matchesSearch =
-      !search ||
-      order.id.toLowerCase().includes(search.toLowerCase()) ||
-      order.customer_id
-        .toLowerCase()
-        .includes(search.toLowerCase()) ||
-      order.source.toLowerCase().includes(search.toLowerCase());
-
-    const matchesStatus =
-      !status || order.status === status;
-
-    return matchesSearch && matchesStatus;
-  });
+  }, [search, status, source, courierID, customerID, fromDate, toDate]);
 
   return (
     <Layout>
@@ -1760,9 +1797,10 @@ function Orders() {
         title="Order management"
         description={`${orders.length} total orders`}
         action={
-          <Link to="/orders/new" className="button primary">
-            Create order
-          </Link>
+          <span>
+            {(role === "admin" || role === "superadmin") && <button className="button ghost" type="button" onClick={exportOrders}>Export CSV</button>}
+            <Link to="/orders/new" className="button primary">Create order</Link>
+          </span>
         }
       />
 
@@ -1792,6 +1830,11 @@ function Orders() {
             <option value="cancelled">Cancelled</option>
             <option value="returned">Returned</option>
           </select>
+          <select value={source} onChange={(event) => setSource(event.target.value)}><option value="">All sources</option><option value="website">Website</option><option value="daraz">Daraz</option><option value="phone">Phone</option><option value="facebook">Facebook</option><option value="instagram">Instagram</option><option value="store">Store</option></select>
+          <input value={courierID} onChange={(event) => setCourierID(event.target.value)} placeholder="Courier ID" />
+          <input value={customerID} onChange={(event) => setCustomerID(event.target.value)} placeholder="Customer ID" />
+          <label>From <input type="date" value={fromDate} onChange={(event) => setFromDate(event.target.value)} /></label>
+          <label>To <input type="date" value={toDate} onChange={(event) => setToDate(event.target.value)} /></label>
         </div>
       </div>
 
@@ -1800,7 +1843,7 @@ function Orders() {
       <div className="card table-card">
         {loading ? (
           <p className="muted">Loading orders...</p>
-        ) : filtered.length === 0 ? (
+        ) : orders.length === 0 ? (
           <EmptyState message="No orders found." />
         ) : (
           <div className="table-wrap">
@@ -1817,7 +1860,7 @@ function Orders() {
               </thead>
 
               <tbody>
-                {filtered.map((order) => (
+                {orders.map((order) => (
                   <tr key={order.id}>
                     <td>
                       <strong>{order.id.slice(0, 8)}</strong>
@@ -2327,8 +2370,14 @@ function Couriers() {
 }
 
 function StatusBadge({ status }: { status: string }) {
+  const color = ["cancelled", "returned"].includes(status)
+    ? "status-red"
+    : ["follow_up", "hold", "redirected"].includes(status)
+      ? "status-amber"
+      : "status-green";
+
   return (
-    <span className={`status status-${status}`}>
+    <span className={`status ${color}`}>
       {statusLabel(status)}
     </span>
   );
@@ -2450,6 +2499,15 @@ export default function App() {
         />
 
         <Route
+          path="/orders/problems"
+          element={
+            <ProtectedRoute>
+              <ProblemOrders />
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
           path="/orders/new"
           element={
             <ProtectedRoute>
@@ -2496,4 +2554,30 @@ export default function App() {
 
 function LegacyBadge() {
   return <span className="status legacy-badge">Legacy</span>;
+}
+
+function ProblemOrders() {
+  const [orders, setOrders] = useState<Order[]>([]);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    async function load() {
+      try {
+        const response = await apiFetch("/orders/problems");
+        if (!response.ok) throw new Error(await readError(response));
+        setOrders(await response.json());
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to load problem orders");
+      }
+    }
+    load();
+  }, []);
+
+  return (
+    <Layout>
+      <PageHeader eyebrow="Orders" title="Problem orders" description="Follow-up, hold, redirect, cancelled, and returned orders" />
+      {error && <div className="alert error">{error}</div>}
+      <div className="card table-card"><div className="table-wrap"><table><thead><tr><th>Order</th><th>Status</th><th>Source</th><th>Created</th></tr></thead><tbody>{orders.map((order) => <tr key={order.id}><td><Link className="text-link" to={`/orders/${order.id}`}>{order.id.slice(0, 8)}</Link></td><td><StatusBadge status={order.status} /></td><td>{order.source}</td><td>{formatDate(order.created_at)}</td></tr>)}</tbody></table></div></div>
+    </Layout>
+  );
 }

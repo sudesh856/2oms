@@ -14,6 +14,7 @@ import (
 	db "oms-backend/internal/db/generated"
 	"oms-backend/internal/orders"
 	"oms-backend/internal/products"
+	"oms-backend/internal/reports"
 )
 
 func TestPhase3RoutesUseRealRouterAndRBAC(t *testing.T) {
@@ -38,7 +39,8 @@ func TestPhase3RoutesUseRealRouterAndRBAC(t *testing.T) {
 	customerHandler := customers.NewHandler(queries)
 	productHandler := products.NewHandler(queries)
 	courierHandler := couriers.NewHandler(queries)
-	router := NewRouter(jwtSecret, authHandler, orderHandler, customerHandler, productHandler, courierHandler)
+	reportHandler := reports.NewHandler(queries)
+	router := NewRouter(jwtSecret, authHandler, orderHandler, customerHandler, productHandler, courierHandler, reportHandler)
 
 	staffToken, err := auth.GenerateToken("test-staff-user", "staff", jwtSecret)
 	if err != nil {
@@ -95,6 +97,14 @@ func TestPhase3RoutesUseRealRouterAndRBAC(t *testing.T) {
 	router.ServeHTTP(followUpsRecording, followUpsRequest)
 	if followUpsRecording.Code != http.StatusOK {
 		t.Fatalf("staff GET /api/followups did not reach the real handler: %d: %s", followUpsRecording.Code, followUpsRecording.Body.String())
+	}
+
+	exportRequest := httptest.NewRequest(http.MethodGet, "/api/reports/orders.csv?status=confirmed", nil)
+	exportRequest.Header.Set("Authorization", "Bearer "+staffToken)
+	exportRecording := httptest.NewRecorder()
+	router.ServeHTTP(exportRecording, exportRequest)
+	if exportRecording.Code != http.StatusForbidden {
+		t.Fatalf("staff CSV export should return 403 from the real router, got %d: %s", exportRecording.Code, exportRecording.Body.String())
 	}
 
 }

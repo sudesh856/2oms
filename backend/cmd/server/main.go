@@ -16,6 +16,7 @@ import (
 	"oms-backend/internal/db/connection"
 	db "oms-backend/internal/db/generated"
 	"oms-backend/internal/orders"
+	"oms-backend/internal/reports"
 
 	"github.com/go-chi/cors"
 
@@ -55,7 +56,8 @@ func main() {
 	productHandler := products.NewHandler(queries)
 
 	courierHandler := couriers.NewHandler(queries)
-	r := NewRouter(jwtSecret, authHandler, orderHandler, customerHandler, productHandler, courierHandler)
+	reportHandler := reports.NewHandler(queries)
+	r := NewRouter(jwtSecret, authHandler, orderHandler, customerHandler, productHandler, courierHandler, reportHandler)
 
 	port := os.Getenv("PORT")
 	if port == "" {
@@ -76,6 +78,7 @@ func NewRouter(
 	customerHandler *customers.Handler,
 	productHandler *products.Handler,
 	courierHandler *couriers.Handler,
+	reportHandler *reports.Handler,
 ) *chi.Mux {
 	r := chi.NewRouter()
 	r.Use(cors.Handler(cors.Options{
@@ -113,6 +116,10 @@ func NewRouter(
 		r.With(auth.RequireRole("superadmin", "admin", "staff")).Patch("/api/orders/{id}/status", orderHandler.UpdateStatus)
 		r.With(auth.RequireRole("superadmin", "admin", "staff")).Post("/api/orders/{id}/followup", orderHandler.CreateFollowUp)
 		r.With(auth.RequireRole("superadmin", "admin", "staff")).Get("/api/followups", orderHandler.ListFollowUps)
+		r.With(auth.RequireRole("superadmin", "admin", "staff")).Get("/api/dashboard/summary", reportHandler.Summary)
+		r.With(auth.RequireRole("superadmin", "admin", "staff")).Get("/api/customers/{id}/history", reportHandler.CustomerHistory)
+		r.With(auth.RequireRole("superadmin", "admin", "staff")).Get("/api/orders/problems", reportHandler.ProblemOrders)
+		r.With(auth.RequireRole("superadmin", "admin")).Get("/api/reports/orders.csv", reportHandler.ExportOrders)
 
 		r.With(auth.RequireRole("superadmin", "admin")).Get("/api/couriers", courierHandler.ListCouriers)
 		r.With(auth.RequireRole("superadmin", "admin")).Post("/api/couriers", courierHandler.CreateCourier)
