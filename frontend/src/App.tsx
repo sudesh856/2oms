@@ -88,7 +88,16 @@ type DashboardSummary = {
   problem_orders: number;
   total_orders: number;
   status_counts: Array<{ status: string; count: number }>;
-  courier_counts: Array<{ courier_name?: string | null; count: number }>;
+  courier_counts: Array<{ CourierName?: string | null; Count: number }>;
+  follow_ups_due: Array<{
+    ID: string;
+    OrderID: string;
+    NextAction: string;
+    NextActionDate: string;
+    Note: string;
+    CustomerName: string;
+    CustomerPhone: string;
+  }>;
 };
 
 type CartItem = {
@@ -423,6 +432,46 @@ function Dashboard() {
             </div>
             <div className="compact-list">
               {(summary?.status_counts ?? []).map((item) => <div className="compact-row" key={item.status}><StatusBadge status={item.status} /><strong>{item.count}</strong></div>)}
+            </div>
+          </section>
+
+          <section className="dashboard-grid">
+            <div className="card">
+              <div className="section-heading">
+                <div><span className="eyebrow">Calls</span><h2>Follow-ups due today</h2></div>
+                <Link to="/followups" className="text-link">View all</Link>
+              </div>
+              {(summary?.follow_ups_due ?? []).length === 0 ? (
+                <p className="muted">No follow-ups due today.</p>
+              ) : (
+                <div className="compact-list">
+                  {(summary?.follow_ups_due ?? []).slice(0, 5).map((followUp) => (
+                    <Link className="compact-row" to={`/orders/${followUp.OrderID}`} key={followUp.ID}>
+                      <div><strong>{followUp.CustomerName}</strong><span>{followUp.CustomerPhone} · {followUp.NextAction}</span></div>
+                      <span>{followUp.Note || "-"}</span>
+                    </Link>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="card">
+              <div className="section-heading">
+                <div><span className="eyebrow">Channels</span><h2>By courier</h2></div>
+                <Link to="/orders" className="text-link">Orders</Link>
+              </div>
+              {(summary?.courier_counts ?? []).length === 0 ? (
+                <p className="muted">No courier counts today.</p>
+              ) : (
+                <div className="compact-list">
+                  {(summary?.courier_counts ?? []).map((courier) => (
+                    <div className="compact-row" key={courier.CourierName ?? "unassigned"}>
+                      <strong>{courier.CourierName || "Unassigned"}</strong>
+                      <span>{courier.Count}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </section>
 
