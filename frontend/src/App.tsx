@@ -61,6 +61,26 @@ type OrderItem = {
   price: unknown;
 };
 
+type FollowUp = {
+  id: string;
+  order_id: string;
+  attempt_no: number;
+  next_action: string;
+  next_action_date?: string | null;
+  note?: string | null;
+  customer_name: string;
+  customer_phone: string;
+  assigned_to_name?: string | null;
+};
+
+type Courier = { id: string; name: string };
+
+type CourierLocation = {
+  id: string;
+  location_name: string;
+  delivery_charge?: unknown;
+};
+
 type CartItem = {
   product: Product;
   quantity: number;
@@ -270,6 +290,10 @@ function Layout({ children }: { children: React.ReactNode }) {
           <Link to="/products">Products</Link>
           <Link to="/orders">Orders</Link>
           <Link to="/orders/new">Create Order</Link>
+          <Link to="/followups">Follow-ups</Link>
+          {(role === "admin" || role === "superadmin") && (
+            <Link to="/couriers">Couriers</Link>
+          )}
         </nav>
 
         <div className="sidebar-bottom">
@@ -1831,6 +1855,10 @@ function OrderDetail() {
   const [products, setProducts] = useState<Product[]>([]);
   const [customer, setCustomer] = useState<Customer | null>(null);
   const [newStatus, setNewStatus] = useState("");
+  const [followUpAction, setFollowUpAction] = useState("no_answer");
+  const [followUpDate, setFollowUpDate] = useState("");
+  const [followUpNote, setFollowUpNote] = useState("");
+  const [followUpSaving, setFollowUpSaving] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -1924,6 +1952,29 @@ function OrderDetail() {
       );
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function createFollowUp() {
+    if (!id) return;
+    setFollowUpSaving(true);
+    setError("");
+    try {
+      const response = await apiFetch(`/orders/${id}/followup`, {
+        method: "POST",
+        body: JSON.stringify({
+          next_action: followUpAction,
+          next_action_date: followUpDate,
+          note: followUpNote,
+        }),
+      });
+      if (!response.ok) throw new Error(await readError(response));
+      setFollowUpNote("");
+      setMessage("Follow-up recorded.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to record follow-up");
+    } finally {
+      setFollowUpSaving(false);
     }
   }
 
@@ -2109,10 +2160,165 @@ function OrderDetail() {
                   backend workflow rules.
                 </p>
               )}
+
+              <hr />
+              <h2>Record follow-up</h2>
+              <label>
+                Action
+                <select value={followUpAction} onChange={(event) => setFollowUpAction(event.target.value)}>
+                  <option value="no_answer">No answer</option>
+                  <option value="call_again">Call again</option>
+                </select>
+              </label>
+              <label>
+                Call again date
+                <input type="date" value={followUpDate} onChange={(event) => setFollowUpDate(event.target.value)} />
+              </label>
+              <label>
+                Note
+                <textarea value={followUpNote} onChange={(event) => setFollowUpNote(event.target.value)} maxLength={500} />
+              </label>
+              <button className="button full" type="button" disabled={followUpSaving} onClick={createFollowUp}>
+                {followUpSaving ? "Saving..." : "Record follow-up"}
+              </button>
             </div>
           </aside>
         </div>
       ) : null}
+    </Layout>
+  );
+}
+
+function FollowUps() {
+  const [items, setItems] = useState<FollowUp[]>([]);
+  const [dueToday, setDueToday] = useState(true);
+  const [unanswered, setUnanswered] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    async function load() {
+      try {
+        const params = new URLSearchParams({
+          due_today: String(dueToday),
+          unanswered: String(unanswered),
+        });
+        const response = await apiFetch(`/followups?${params.toString()}`);
+        if (!response.ok) throw new Error(await readError(response));
+        setItems(await response.json());
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to load follow-ups");
+      }
+    }
+    load();
+  }, [dueToday, unanswered]);
+
+  return (
+    <Layout>
+      <PageHeader eyebrow="Follow-ups" title="Follow-up queue" description="Due today and unanswered customers" />
+      <div className="card filters">
+        <label><input type="checkbox" checked={dueToday} onChange={(event) => setDueToday(event.target.checked)} /> Due today</label>
+        <label><input type="checkbox" checked={unanswered} onChange={(event) => setUnanswered(event.target.checked)} /> Unanswered</label>
+      </div>
+      {error && <div className="alert error">{error}</div>}
+      <div className="card table-card">
+        {items.length === 0 ? <EmptyState message="No follow-ups found." /> : (
+          <div className="table-wrap">
+            <table>
+              <thead><tr><th>Customer</th><th>Action</th><th>Due</th><th>Assigned to</th><th>Note</th></tr></thead>
+              <tbody>{items.map((item) => <tr key={item.id}><td><strong>{item.customer_name}</strong><br />{item.customer_phone}</td><td>{item.next_action} #{item.attempt_no}</td><td>{item.next_action_date || "-"}</td><td>{item.assigned_to_name || "Unassigned"}</td><td>{item.note || "-"}</td></tr>)}</tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </Layout>
+  );
+}
+
+function Couriers() {
+  const [couriers, setCouriers] = useState<Courier[]>([]);
+  const [locations, setLocations] = useState<CourierLocation[]>([]);
+  const [selectedCourier, setSelectedCourier] = useState("");
+  const [courierName, setCourierName] = useState("");
+  const [locationName, setLocationName] = useState("");
+  const [deliveryCharge, setDeliveryCharge] = useState("");
+  const [editingCourier, setEditingCourier] = useState<string | null>(null);
+  const [editingLocation, setEditingLocation] = useState<string | null>(null);
+  const [error, setError] = useState("");
+
+  async function loadCouriers() {
+    const response = await apiFetch("/couriers");
+    if (!response.ok) throw new Error(await readError(response));
+    const data: Courier[] = await response.json();
+    setCouriers(data);
+    if (!selectedCourier && data[0]) setSelectedCourier(data[0].id);
+  }
+
+  async function loadLocations(courierID = selectedCourier) {
+    if (!courierID) return;
+    const response = await apiFetch(`/couriers/${courierID}/locations`);
+    if (!response.ok) throw new Error(await readError(response));
+    setLocations(await response.json());
+  }
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      loadCouriers().catch((err) => setError(err instanceof Error ? err.message : "Failed to load couriers"));
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, []);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      loadLocations().catch((err) => setError(err instanceof Error ? err.message : "Failed to load locations"));
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [selectedCourier]);
+
+  async function saveCourier() {
+    const path = editingCourier ? `/couriers/${editingCourier}` : "/couriers";
+    const response = await apiFetch(path, { method: editingCourier ? "PATCH" : "POST", body: JSON.stringify({ name: courierName }) });
+    if (!response.ok) { setError(await readError(response)); return; }
+    setCourierName(""); setEditingCourier(null); await loadCouriers();
+  }
+
+  async function removeCourier(id: string) {
+    const response = await apiFetch(`/couriers/${id}`, { method: "DELETE" });
+    if (!response.ok) { setError(await readError(response)); return; }
+    setSelectedCourier(""); await loadCouriers();
+  }
+
+  async function saveLocation() {
+    if (!selectedCourier) return;
+    const path = editingLocation ? `/couriers/${selectedCourier}/locations/${editingLocation}` : `/couriers/${selectedCourier}/locations`;
+    const response = await apiFetch(path, { method: editingLocation ? "PATCH" : "POST", body: JSON.stringify({ location_name: locationName, delivery_charge: deliveryCharge }) });
+    if (!response.ok) { setError(await readError(response)); return; }
+    setLocationName(""); setDeliveryCharge(""); setEditingLocation(null); await loadLocations();
+  }
+
+  async function removeLocation(id: string) {
+    if (!selectedCourier) return;
+    const response = await apiFetch(`/couriers/${selectedCourier}/locations/${id}`, { method: "DELETE" });
+    if (!response.ok) { setError(await readError(response)); return; }
+    await loadLocations();
+  }
+
+  return (
+    <Layout>
+      <PageHeader eyebrow="Admin" title="Couriers and locations" description="Manage courier-owned delivery locations" />
+      {error && <div className="alert error">{error}</div>}
+      <div className="detail-grid">
+        <section className="card">
+          <h2>Couriers</h2>
+          <div className="stack"><input value={courierName} onChange={(event) => setCourierName(event.target.value)} placeholder="Courier name" /><button className="button primary" type="button" onClick={saveCourier}>{editingCourier ? "Save courier" : "Add courier"}</button></div>
+          <div className="compact-list">{couriers.map((courier) => <div className="compact-row" key={courier.id}><button className="text-link" type="button" onClick={() => setSelectedCourier(courier.id)}>{courier.name}</button><span><button className="button ghost" type="button" onClick={() => { setEditingCourier(courier.id); setCourierName(courier.name); }}>Edit</button><button className="button ghost" type="button" onClick={() => removeCourier(courier.id)}>Delete</button></span></div>)}</div>
+        </section>
+        <section className="card">
+          <h2>Locations</h2>
+          <select value={selectedCourier} onChange={(event) => setSelectedCourier(event.target.value)}><option value="">Select courier</option>{couriers.map((courier) => <option key={courier.id} value={courier.id}>{courier.name}</option>)}</select>
+          <div className="stack"><input value={locationName} onChange={(event) => setLocationName(event.target.value)} placeholder="Location name" /><input value={deliveryCharge} onChange={(event) => setDeliveryCharge(event.target.value)} placeholder="Delivery charge" /><button className="button primary" type="button" disabled={!selectedCourier} onClick={saveLocation}>{editingLocation ? "Save location" : "Add location"}</button></div>
+          <div className="compact-list">{locations.map((location) => <div className="compact-row" key={location.id}><span>{location.location_name} ({money(location.delivery_charge)})</span><span><button className="button ghost" type="button" onClick={() => { setEditingLocation(location.id); setLocationName(location.location_name); setDeliveryCharge(String(location.delivery_charge ?? "")); }}>Edit</button><button className="button ghost" type="button" onClick={() => removeLocation(location.id)}>Delete</button></span></div>)}</div>
+        </section>
+      </div>
     </Layout>
   );
 }
@@ -2255,6 +2461,24 @@ export default function App() {
             <ProtectedRoute>
               <OrderDetail />
             </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/followups"
+          element={
+            <ProtectedRoute>
+              <FollowUps />
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/couriers"
+          element={
+            <RoleProtectedRoute roles={["admin", "superadmin"]}>
+              <Couriers />
+            </RoleProtectedRoute>
           }
         />
 

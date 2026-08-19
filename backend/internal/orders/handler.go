@@ -93,6 +93,53 @@ func writeOrderJSON(w http.ResponseWriter, order any, staff bool, statusCode int
 	json.NewEncoder(w).Encode(result)
 }
 
+func writeCreatedOrderJSON(w http.ResponseWriter, order any, warnings []StockWarning, staff bool) {
+	data, err := json.Marshal(order)
+	if err != nil {
+		api.WriteError(w, http.StatusInternalServerError, "ORDER_SERIALIZE_FAILED", "failed to serialize order")
+		return
+	}
+
+	var raw map[string]any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		api.WriteError(w, http.StatusInternalServerError, "ORDER_SERIALIZE_FAILED", "failed to serialize order")
+		return
+	}
+
+	rename := map[string]string{
+		"ID": "id", "CustomerID": "customer_id", "Source": "source", "Status": "status",
+		"CourierID": "courier_id", "LocationID": "location_id", "Address": "address",
+		"CODAmount": "cod_amount", "IsStoreVisit": "is_store_visit", "CreatedBy": "created_by",
+		"CreatedAt": "created_at", "UpdatedAt": "updated_at",
+	}
+	result := make(map[string]any, len(raw)+1)
+	for key, value := range raw {
+		jsonKey := rename[key]
+		if jsonKey == "" {
+			jsonKey = key
+		}
+		if staff && jsonKey == "cod_amount" {
+			continue
+		}
+		result[jsonKey] = value
+	}
+
+	stockWarnings := make([]map[string]any, 0, len(warnings))
+	for _, warning := range warnings {
+		stockWarnings = append(stockWarnings, map[string]any{
+			"product_id":    warning.ProductID,
+			"product_name":  warning.ProductName,
+			"requested_qty": warning.RequestedQty,
+			"available_qty": warning.AvailableQty,
+		})
+	}
+	result["stock_warnings"] = stockWarnings
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(result)
+}
+
 func writeOrdersJSON(w http.ResponseWriter, orders any, staff bool) {
 	data, err := json.Marshal(orders)
 	if err != nil {
@@ -508,7 +555,7 @@ func (h *Handler) CreateOrder(w http.ResponseWriter, r *http.Request) {
 		Pool: h.Pool,
 	}
 
-	order, err := service.CreateOrderWithItems(r.Context(),
+	order, warnings, err := service.CreateOrderWithItemsAndWarnings(r.Context(),
 		CreateOrderInput{
 			CustomerID:   customerID,
 			Source:       db.OrderSource(req.Source),
@@ -530,5 +577,5 @@ func (h *Handler) CreateOrder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeOrderJSON(w, order, claims.Role == "staff", http.StatusCreated)
+	writeCreatedOrderJSON(w, order, warnings, claims.Role == "staff")
 }

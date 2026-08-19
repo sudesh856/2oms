@@ -26,14 +26,30 @@ type CreateOrderInput struct {
 	Items        []CreateOrderItem
 }
 
+type StockWarning struct {
+	ProductID    uuid.UUID
+	ProductName  string
+	RequestedQty int32
+	AvailableQty int32
+}
+
 func (s *Service) CreateOrderWithItems(
 	ctx context.Context,
 	input CreateOrderInput,
 	isStaff bool,
 ) (db.Order, error) {
+	order, _, err := s.CreateOrderWithItemsAndWarnings(ctx, input, isStaff)
+	return order, err
+}
+
+func (s *Service) CreateOrderWithItemsAndWarnings(
+	ctx context.Context,
+	input CreateOrderInput,
+	isStaff bool,
+) (db.Order, []StockWarning, error) {
 	tx, err := s.Pool.Begin(ctx)
 	if err != nil {
-		return db.Order{}, fmt.Errorf("BEGIN TRANSACTION: %w", err)
+		return db.Order{}, nil, fmt.Errorf("BEGIN TRANSACTION: %w", err)
 	}
 	defer tx.Rollback(ctx)
 
@@ -50,6 +66,7 @@ func (s *Service) CreateOrderWithItems(
 	}
 
 	var order db.Order
+	warnings := make([]StockWarning, 0)
 
 	if isStaff {
 		staffOrder, err := queries.CreateOrderForStaff(
@@ -64,7 +81,7 @@ func (s *Service) CreateOrderWithItems(
 			},
 		)
 		if err != nil {
-			return db.Order{}, fmt.Errorf("CREATE STAFF ORDER: %w", err)
+			return db.Order{}, nil, fmt.Errorf("CREATE STAFF ORDER: %w", err)
 		}
 
 		order = db.Order{
@@ -94,7 +111,7 @@ func (s *Service) CreateOrderWithItems(
 			},
 		)
 		if err != nil {
-			return db.Order{}, fmt.Errorf("CREATE ADMIN ORDER: %w", err)
+			return db.Order{}, nil, fmt.Errorf("CREATE ADMIN ORDER: %w", err)
 		}
 	}
 
@@ -107,7 +124,7 @@ func (s *Service) CreateOrderWithItems(
 			ChangedBy:  createdBy,
 		},
 	); err != nil {
-		return db.Order{}, fmt.Errorf("CREATE STATUS HISTORY: %w", err)
+		return db.Order{}, nil, fmt.Errorf("CREATE STATUS HISTORY: %w", err)
 	}
 
 	for _, item := range input.Items {
@@ -127,8 +144,12 @@ func (s *Service) CreateOrderWithItems(
 			if err == pgx.ErrNoRows {
 				productDetails, fetchErr := queries.GetProductByID(ctx, productID)
 				if fetchErr != nil {
-					return db.Order{}, fmt.Errorf("GET PRODUCT: %w", fetchErr)
+					return db.Order{}, nil, fmt.Errorf("GET PRODUCT: %w", fetchErr)
 				}
+				warnings = append(warnings, StockWarning{
+					ProductID: item.ProductID, ProductName: productDetails.Name,
+					RequestedQty: item.Quantity, AvailableQty: productDetails.AvailableQty,
+				})
 				productPrice := productDetails.Price
 				_, err = queries.CreateOrderItem(
 					ctx,
@@ -138,11 +159,11 @@ func (s *Service) CreateOrderWithItems(
 					},
 				)
 				if err != nil {
-					return db.Order{}, fmt.Errorf("CREATE ORDER ITEM: %w", err)
+					return db.Order{}, nil, fmt.Errorf("CREATE ORDER ITEM: %w", err)
 				}
 				continue
 			} else {
-				return db.Order{}, fmt.Errorf("DECREASE STOCK: %w", err)
+				return db.Order{}, nil, fmt.Errorf("DECREASE STOCK: %w", err)
 			}
 		}
 
@@ -156,13 +177,13 @@ func (s *Service) CreateOrderWithItems(
 			},
 		)
 		if err != nil {
-			return db.Order{}, fmt.Errorf("CREATE ORDER ITEM: %w", err)
+			return db.Order{}, nil, fmt.Errorf("CREATE ORDER ITEM: %w", err)
 		}
 	}
 
 	if err := tx.Commit(ctx); err != nil {
-		return db.Order{}, fmt.Errorf("COMMIT TRANSACTION: %w", err)
+		return db.Order{}, nil, fmt.Errorf("COMMIT TRANSACTION: %w", err)
 	}
 
-	return order, nil
+	return order, warnings, nil
 }

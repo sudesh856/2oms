@@ -11,6 +11,7 @@ import (
 	"golang.org/x/time/rate"
 
 	"oms-backend/internal/auth"
+	"oms-backend/internal/couriers"
 	"oms-backend/internal/customers"
 	"oms-backend/internal/db/connection"
 	db "oms-backend/internal/db/generated"
@@ -53,6 +54,29 @@ func main() {
 	customerHandler := customers.NewHandler(queries)
 	productHandler := products.NewHandler(queries)
 
+	courierHandler := couriers.NewHandler(queries)
+	r := NewRouter(jwtSecret, authHandler, orderHandler, customerHandler, productHandler, courierHandler)
+
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
+
+	log.Printf("OMS API running on http://localhost:%s", port)
+
+	if err := http.ListenAndServe(":"+port, r); err != nil {
+		log.Fatal(err)
+	}
+}
+
+func NewRouter(
+	jwtSecret string,
+	authHandler *auth.Handler,
+	orderHandler *orders.Handler,
+	customerHandler *customers.Handler,
+	productHandler *products.Handler,
+	courierHandler *couriers.Handler,
+) *chi.Mux {
 	r := chi.NewRouter()
 	r.Use(cors.Handler(cors.Options{
 		AllowedOrigins:   []string{"http://localhost:5173"},
@@ -87,6 +111,17 @@ func main() {
 		r.With(auth.RequireRole("superadmin", "admin", "staff")).Get("/api/orders", orderHandler.ListOrders)
 		r.With(auth.RequireRole("superadmin", "admin", "staff")).Post("/api/orders", orderHandler.CreateOrder)
 		r.With(auth.RequireRole("superadmin", "admin", "staff")).Patch("/api/orders/{id}/status", orderHandler.UpdateStatus)
+		r.With(auth.RequireRole("superadmin", "admin", "staff")).Post("/api/orders/{id}/followup", orderHandler.CreateFollowUp)
+		r.With(auth.RequireRole("superadmin", "admin", "staff")).Get("/api/followups", orderHandler.ListFollowUps)
+
+		r.With(auth.RequireRole("superadmin", "admin")).Get("/api/couriers", courierHandler.ListCouriers)
+		r.With(auth.RequireRole("superadmin", "admin")).Post("/api/couriers", courierHandler.CreateCourier)
+		r.With(auth.RequireRole("superadmin", "admin")).Patch("/api/couriers/{id}", courierHandler.UpdateCourier)
+		r.With(auth.RequireRole("superadmin", "admin")).Delete("/api/couriers/{id}", courierHandler.DeleteCourier)
+		r.With(auth.RequireRole("superadmin", "admin")).Get("/api/couriers/{courierID}/locations", courierHandler.ListLocations)
+		r.With(auth.RequireRole("superadmin", "admin")).Post("/api/couriers/{courierID}/locations", courierHandler.CreateLocation)
+		r.With(auth.RequireRole("superadmin", "admin")).Patch("/api/couriers/{courierID}/locations/{id}", courierHandler.UpdateLocation)
+		r.With(auth.RequireRole("superadmin", "admin")).Delete("/api/couriers/{courierID}/locations/{id}", courierHandler.DeleteLocation)
 
 		r.With(auth.RequireRole("superadmin", "admin")).Get("/api/admin/test", func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
@@ -105,14 +140,5 @@ func main() {
 		w.Write([]byte(`{"status":"ok","database":"connected"}`))
 	})
 
-	port := os.Getenv("PORT")
-	if port == "" {
-		port = "8080"
-	}
-
-	log.Printf("OMS API running on http://localhost:%s", port)
-
-	if err := http.ListenAndServe(":"+port, r); err != nil {
-		log.Fatal(err)
-	}
+	return r
 }
