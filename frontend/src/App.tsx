@@ -307,6 +307,17 @@ function formatDate(value: string) {
   return new Date(value).toLocaleString();
 }
 
+function frontendInvitationURL(value: unknown) {
+  if (typeof value !== "string" || !value) return "";
+
+  try {
+    const invitation = new URL(value, window.location.origin);
+    return `${window.location.origin}${invitation.pathname}${invitation.search}${invitation.hash}`;
+  } catch {
+    return "";
+  }
+}
+
 function statusLabel(status?: string) {
   return (status ?? "unknown").replaceAll("_", " ");
 }
@@ -2739,7 +2750,7 @@ function Users() {
       const data = await response.json();
       setName("");
       setPhone("");
-      setInvitationURL(data.invitation_url || "");
+      setInvitationURL(frontendInvitationURL(data.invitation_url));
       setMessage("Invitation created. Share the invitation URL securely.");
       await loadUsers();
     } catch (err) {
@@ -2757,7 +2768,7 @@ function Users() {
       const response = await apiFetch(`/users/${id}/resend-invitation`, { method: "POST" });
       if (!response.ok) throw new Error(await readError(response));
       const data = await response.json();
-      setInvitationURL(data.invitation_url || "");
+      setInvitationURL(frontendInvitationURL(data.invitation_url));
       setMessage("Invitation renewed. Share the new invitation URL securely.");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to resend invitation");
