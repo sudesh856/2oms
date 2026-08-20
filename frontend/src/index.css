@@ -300,6 +300,13 @@ input[type="checkbox"] {
   color: #166534;
 }
 
+.network-retry {
+  border-color: var(--accent-border);
+  background: var(--accent-bg);
+  color: var(--accent-dark);
+  margin-bottom: 16px;
+}
+
 .app-shell {
   min-height: 100svh;
   background: var(--bg);
@@ -874,6 +881,12 @@ tbody tr:hover {
   font-weight: 700;
 }
 
+.user-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 @media (min-width: 560px) {
   .form-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -885,6 +898,58 @@ tbody tr:hover {
 
   .search-row input {
     flex: 1;
+  }
+
+  .product-search {
+    position: relative;
+    flex: 1;
+  }
+
+  .product-suggestions {
+    position: absolute;
+    z-index: 5;
+    top: calc(100% + 4px);
+    right: 0;
+    left: 0;
+    display: flex;
+    flex-direction: column;
+    max-height: 280px;
+    overflow-y: auto;
+    border: 1px solid var(--border-strong);
+    border-radius: 6px;
+    background: var(--surface);
+    box-shadow: var(--shadow);
+  }
+
+  .product-suggestion {
+    display: flex;
+    min-height: 44px;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    border: 0;
+    border-bottom: 1px solid var(--border);
+    background: transparent;
+    color: var(--text-h);
+    cursor: pointer;
+    padding: 10px 12px;
+    text-align: left;
+  }
+
+  .product-suggestion:last-child {
+    border-bottom: 0;
+  }
+
+  .product-suggestion:hover,
+  .product-suggestion:focus-visible {
+    background: var(--accent-bg);
+    outline: none;
+  }
+
+  .product-suggestion span {
+    color: var(--text-soft);
+    font-size: 13px;
+    white-space: nowrap;
   }
 
   .form-actions {

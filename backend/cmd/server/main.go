@@ -4,6 +4,7 @@ import (
 	"log"
 	"net/http"
 	"oms-backend/internal/products"
+	"strings"
 	"time"
 
 	"os"
@@ -17,6 +18,7 @@ import (
 	db "oms-backend/internal/db/generated"
 	"oms-backend/internal/orders"
 	"oms-backend/internal/reports"
+	"oms-backend/internal/users"
 
 	"github.com/go-chi/cors"
 
@@ -50,6 +52,7 @@ func main() {
 
 	authHandler := &auth.Handler{
 		Queries: queries,
+		Pool:    dbPool,
 	}
 	orderHandler := orders.NewHandler(queries, dbPool)
 	customerHandler := customers.NewHandler(queries)
@@ -57,7 +60,8 @@ func main() {
 
 	courierHandler := couriers.NewHandler(queries)
 	reportHandler := reports.NewHandler(queries)
-	r := NewRouter(jwtSecret, authHandler, orderHandler, customerHandler, productHandler, courierHandler, reportHandler)
+	userHandler := users.NewHandler(queries)
+	r := NewRouter(jwtSecret, authHandler, orderHandler, customerHandler, productHandler, courierHandler, reportHandler, userHandler)
 
 	port := os.Getenv("PORT")
 	if port == "" {
@@ -79,10 +83,11 @@ func NewRouter(
 	productHandler *products.Handler,
 	courierHandler *couriers.Handler,
 	reportHandler *reports.Handler,
+	userHandler *users.Handler,
 ) *chi.Mux {
 	r := chi.NewRouter()
 	r.Use(cors.Handler(cors.Options{
-		AllowedOrigins:   []string{"https://frontend398745lkajsgd.onrender.com"},
+		AllowedOrigins:   allowedOrigins(),
 		AllowedMethods:   []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
 		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type"},
 		AllowCredentials: true,
@@ -93,6 +98,10 @@ func NewRouter(
 	loginRateLimiter.Cleanup(10 * time.Minute)
 
 	r.With(loginRateLimiter.Middleware).Post("/api/auth/login", authHandler.Login)
+	r.Get("/api/auth/setup/status", authHandler.SetupStatus)
+	r.Post("/api/auth/setup", authHandler.Setup)
+	r.Get("/api/auth/invitation/{token}", authHandler.GetInvitation)
+	r.Post("/api/auth/accept-invitation/{token}", authHandler.AcceptInvitation)
 
 	r.Group(func(r chi.Router) {
 		r.Use(auth.RequireAuth(jwtSecret))
@@ -135,6 +144,12 @@ func NewRouter(
 			w.Write([]byte(`{"access":"admin"}`))
 		})
 
+		r.With(auth.RequireRole("superadmin", "admin")).Post("/api/users", userHandler.Create)
+		r.With(auth.RequireRole("superadmin", "admin")).Get("/api/users", userHandler.List)
+		r.With(auth.RequireRole("superadmin", "admin")).Patch("/api/users/{id}", userHandler.Update)
+		r.With(auth.RequireRole("superadmin", "admin")).Post("/api/users/{id}/resend-invitation", userHandler.ResendInvitation)
+		r.With(auth.RequireRole("superadmin", "admin")).Post("/api/users/{id}/revoke-invitation", userHandler.RevokeInvitation)
+
 		r.With(auth.RequireRole("staff", "admin", "superadmin")).Get("/api/staff/test", func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			w.Write([]byte(`{"access":"staff-compatible"}`))
@@ -148,4 +163,23 @@ func NewRouter(
 	})
 
 	return r
+}
+
+func allowedOrigins() []string {
+	value := strings.TrimSpace(os.Getenv("ALLOWED_ORIGINS"))
+	if value == "" {
+		return []string{"http://localhost:5173"}
+	}
+
+	origins := make([]string, 0)
+	for _, origin := range strings.Split(value, ",") {
+		origin = strings.TrimSpace(origin)
+		if origin != "" {
+			origins = append(origins, origin)
+		}
+	}
+	if len(origins) == 0 {
+		return []string{"http://localhost:5173"}
+	}
+	return origins
 }

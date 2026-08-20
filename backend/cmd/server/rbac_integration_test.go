@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -16,6 +17,7 @@ import (
 	"oms-backend/internal/orders"
 	"oms-backend/internal/products"
 	"oms-backend/internal/reports"
+	"oms-backend/internal/users"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -67,6 +69,9 @@ func TestEveryRegisteredRouteEnforcesRBAC(t *testing.T) {
 		{name: "delete location", method: http.MethodDelete, path: "/api/couriers/not-a-uuid/locations/not-a-uuid", allowed: adminRoles(), wantStatus: http.StatusBadRequest},
 		{name: "admin test", method: http.MethodGet, path: "/api/admin/test", allowed: adminRoles(), wantStatus: http.StatusOK},
 		{name: "staff test", method: http.MethodGet, path: "/api/staff/test", allowed: allRoles(), wantStatus: http.StatusOK},
+		{name: "list users", method: http.MethodGet, path: "/api/users", allowed: map[string]bool{"superadmin": true}, wantStatus: http.StatusOK},
+		{name: "create user", method: http.MethodPost, path: "/api/users", body: `{}`, allowed: map[string]bool{"superadmin": true}, wantStatus: http.StatusBadRequest},
+		{name: "update user", method: http.MethodPatch, path: "/api/users/not-a-uuid", body: `{}`, allowed: map[string]bool{"superadmin": true}, wantStatus: http.StatusBadRequest},
 	}
 
 	for _, testCase := range testCases {
@@ -160,6 +165,102 @@ func TestStaffOrderResponsesNeverContainCODAmount(t *testing.T) {
 	}
 }
 
+func TestSuperadminManagesInternalUsers(t *testing.T) {
+	router, jwtSecret, pool := newIntegrationRouter(t)
+	defer pool.Close()
+
+	superadminID := uuid.New()
+	if err := pool.QueryRow(context.Background(), "SELECT id FROM users WHERE role = 'superadmin' LIMIT 1").Scan(&superadminID); err != nil {
+		t.Fatalf("expected a superadmin fixture: %v", err)
+	}
+	staffPhone := "97" + strings.ReplaceAll(uuid.NewString(), "-", "")[:8]
+	adminPhone := "98" + strings.ReplaceAll(uuid.NewString(), "-", "")[:8]
+	defer pool.Exec(context.Background(), "DELETE FROM users WHERE phone IN ($1, $2)", staffPhone, adminPhone)
+
+	superadminToken, err := auth.GenerateToken(superadminID.String(), "superadmin", jwtSecret)
+	if err != nil {
+		t.Fatalf("failed to generate superadmin token: %v", err)
+	}
+
+	create := func(name, phone, password, role string) (int, userResponse) {
+		req := httptest.NewRequest(http.MethodPost, "/api/users", strings.NewReader(`{"name":"`+name+`","phone":"`+phone+`","password":"`+password+`","role":"`+role+`"}`))
+		req.Header.Set("Authorization", "Bearer "+superadminToken)
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		var user userResponse
+		_ = json.NewDecoder(rec.Body).Decode(&user)
+		return rec.Code, user
+	}
+
+	if status, user := create("Real Staff", staffPhone, "StaffReal123!", "staff"); status != http.StatusCreated || user.Role != "staff" || user.IsActive == false {
+		t.Fatalf("create staff: expected active staff 201, got %d %+v", status, user)
+	}
+	if status, user := create("Real Admin", adminPhone, "AdminReal123!", "admin"); status != http.StatusCreated || user.Role != "admin" || user.IsActive == false {
+		t.Fatalf("create admin: expected active admin 201, got %d %+v", status, user)
+	}
+	if status, _ := create("Invalid Superadmin", "96"+strings.ReplaceAll(uuid.NewString(), "-", "")[:8], "Blocked123!", "superadmin"); status != http.StatusBadRequest {
+		t.Fatalf("create superadmin: expected 400, got %d", status)
+	}
+
+	listRequest := httptest.NewRequest(http.MethodGet, "/api/users", nil)
+	listRequest.Header.Set("Authorization", "Bearer "+superadminToken)
+	listRecording := httptest.NewRecorder()
+	router.ServeHTTP(listRecording, listRequest)
+	if listRecording.Code != http.StatusOK || strings.Contains(listRecording.Body.String(), "password_hash") {
+		t.Fatalf("list users exposed an unsafe response: %d %s", listRecording.Code, listRecording.Body.String())
+	}
+
+	var staff userResponse
+	if err := pool.QueryRow(context.Background(), "SELECT id, name, phone, role, is_active FROM users WHERE phone = $1", staffPhone).Scan(&staff.ID, &staff.Name, &staff.Phone, &staff.Role, &staff.IsActive); err != nil {
+		t.Fatalf("find created staff: %v", err)
+	}
+
+	patch := func(id, body string) int {
+		req := httptest.NewRequest(http.MethodPatch, "/api/users/"+id, strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+superadminToken)
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		return rec.Code
+	}
+	if status := patch(staff.ID, `{"is_active":false}`); status != http.StatusOK {
+		t.Fatalf("deactivate staff: expected 200, got %d", status)
+	}
+
+	login := func(phone, password string) int {
+		req := httptest.NewRequest(http.MethodPost, "/api/auth/login", strings.NewReader(`{"phone":"`+phone+`","password":"`+password+`"}`))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		return rec.Code
+	}
+	if status := login(staffPhone, "StaffReal123!"); status != http.StatusUnauthorized {
+		t.Fatalf("inactive staff login: expected 401, got %d", status)
+	}
+	if status := patch(staff.ID, `{"password":"StaffReset123!"}`); status != http.StatusOK {
+		t.Fatalf("reset staff password: expected 200, got %d", status)
+	}
+	if status := patch(staff.ID, `{"is_active":true}`); status != http.StatusOK {
+		t.Fatalf("reactivate staff: expected 200, got %d", status)
+	}
+	if status := login(staffPhone, "StaffReset123!"); status != http.StatusOK {
+		t.Fatalf("new staff password login: expected 200, got %d", status)
+	}
+
+	if status := patch(superadminID.String(), `{"is_active":false}`); status != http.StatusBadRequest {
+		t.Fatalf("self-deactivation: expected 400, got %d", status)
+	}
+}
+
+type userResponse struct {
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	Phone    string `json:"phone"`
+	Role     string `json:"role"`
+	IsActive bool   `json:"is_active"`
+}
+
 func newIntegrationRouter(t *testing.T) (*chi.Mux, string, *pgxpool.Pool) {
 	t.Helper()
 	databaseURL := os.Getenv("DATABASE_URL")
@@ -176,7 +277,7 @@ func newIntegrationRouter(t *testing.T) (*chi.Mux, string, *pgxpool.Pool) {
 		t.Fatalf("failed to connect to database: %v", err)
 	}
 	queries := db.New(pool)
-	router := NewRouter(jwtSecret, &auth.Handler{Queries: queries}, orders.NewHandler(queries, pool), customers.NewHandler(queries), products.NewHandler(queries), couriers.NewHandler(queries), reports.NewHandler(queries))
+	router := NewRouter(jwtSecret, &auth.Handler{Queries: queries}, orders.NewHandler(queries, pool), customers.NewHandler(queries), products.NewHandler(queries), couriers.NewHandler(queries), reports.NewHandler(queries), users.NewHandler(queries))
 	return router, jwtSecret, pool
 }
 

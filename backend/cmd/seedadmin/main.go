@@ -30,7 +30,12 @@ func main() {
 	}
 	defer pool.Close()
 
-	password := "ChangeMe123!"
+	name := os.Getenv("BOOTSTRAP_ADMIN_NAME")
+	phone := auth.NormalizePhone(os.Getenv("BOOTSTRAP_ADMIN_PHONE"))
+	password := os.Getenv("BOOTSTRAP_ADMIN_PASSWORD")
+	if name == "" || phone == "" || password == "" {
+		log.Fatal("BOOTSTRAP_ADMIN_NAME, BOOTSTRAP_ADMIN_PHONE, and BOOTSTRAP_ADMIN_PASSWORD must be set")
+	}
 
 	hash, err := auth.HashPassword(password)
 	if err != nil {
@@ -42,8 +47,8 @@ func main() {
 	user, err := queries.CreateUser(
 		context.Background(),
 		db.CreateUserParams{
-			Name:         "System Administrator",
-			Phone:        "9800000000",
+			Name:         name,
+			Phone:        phone,
 			PasswordHash: hash,
 			Role:         db.UserRoleSuperadmin,
 		},
@@ -53,5 +58,4 @@ func main() {
 	}
 
 	log.Printf("Created SUPERADMIN: %s (%s)", user.Name, user.Phone)
-	log.Println("Temporary password:", password)
 }

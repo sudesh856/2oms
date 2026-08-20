@@ -228,10 +228,13 @@ type StatusHistory struct {
 }
 
 type User struct {
-	ID           pgtype.UUID
-	Name         string
-	Phone        string
-	PasswordHash string
-	Role         UserRole
-	CreatedAt    pgtype.Timestamptz
+	ID                  pgtype.UUID
+	Name                string
+	Phone               string
+	PasswordHash        string
+	Role                UserRole
+	CreatedAt           pgtype.Timestamptz
+	IsActive            bool
+	InvitationTokenHash pgtype.Text
+	InvitationExpiresAt pgtype.Timestamptz
 }

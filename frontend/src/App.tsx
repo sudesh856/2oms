@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { jwtDecode } from "jwt-decode";
 import {
   BrowserRouter,
@@ -29,6 +29,24 @@ type Customer = {
   created_at?: string;
 };
 
+function normalizeCustomer(value: Partial<Customer> & {
+  ID?: string;
+  Phone?: string;
+  Phone2?: string | null;
+  Name?: string;
+  Address?: string | null;
+  CreatedAt?: string;
+}): Customer {
+  return {
+    id: value.id ?? value.ID ?? "",
+    phone: value.phone ?? value.Phone ?? "",
+    phone2: value.phone2 ?? value.Phone2,
+    name: value.name ?? value.Name ?? "",
+    address: value.address ?? value.Address,
+    created_at: value.created_at ?? value.CreatedAt,
+  };
+}
+
 type Product = {
   id: string;
   name: string;
@@ -37,6 +55,24 @@ type Product = {
   warehouse_qty: number;
   created_at?: string;
 };
+
+function normalizeProduct(value: Partial<Product> & {
+  ID?: string;
+  Name?: string;
+  Price?: unknown;
+  AvailableQty?: number;
+  WarehouseQty?: number;
+  CreatedAt?: string;
+}): Product {
+  return {
+    id: value.id ?? value.ID ?? "",
+    name: value.name ?? value.Name ?? "",
+    price: value.price ?? value.Price,
+    available_qty: value.available_qty ?? value.AvailableQty ?? 0,
+    warehouse_qty: value.warehouse_qty ?? value.WarehouseQty ?? 0,
+    created_at: value.created_at ?? value.CreatedAt,
+  };
+}
 
 type Order = {
   id: string;
@@ -105,6 +141,75 @@ type CartItem = {
   quantity: number;
 };
 
+type User = {
+  id: string;
+  name: string;
+  phone: string;
+  role: Role;
+  status?: string;
+  is_active: boolean;
+};
+
+const retryListeners = new Set<(retrying: boolean) => void>();
+let networkRetrying = false;
+
+function setNetworkRetrying(value: boolean) {
+  networkRetrying = value;
+  retryListeners.forEach((listener) => listener(value));
+}
+
+function useNetworkRetrying() {
+  const [retrying, setRetrying] = useState(networkRetrying);
+
+  useEffect(() => {
+    retryListeners.add(setRetrying);
+    return () => {
+      retryListeners.delete(setRetrying);
+    };
+  }, []);
+
+  return retrying;
+}
+
+function NetworkRetryNotice() {
+  const retrying = useNetworkRetrying();
+
+  if (!retrying) return null;
+
+  return <div className="alert network-retry">Can't reach the server — it may be waking up, retrying...</div>;
+}
+
+function wait(milliseconds: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
+}
+
+async function fetchWithRetry(
+  input: RequestInfo | URL,
+  options: RequestInit,
+) {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      const response = await fetch(input, options);
+      setNetworkRetrying(false);
+      return response;
+    } catch (error) {
+      if (attempt === 2) {
+        setNetworkRetrying(false);
+        throw new Error("Can't reach the server after retrying. Please try again.");
+      }
+
+      setNetworkRetrying(true);
+      await wait(500);
+
+      if (!(error instanceof TypeError)) {
+        throw error;
+      }
+    }
+  }
+
+  throw new Error("Can't reach the server after retrying. Please try again.");
+}
+
 function token() {
   return localStorage.getItem("token");
 }
@@ -134,7 +239,7 @@ async function apiFetch(path: string, options: RequestInit = {}) {
     headers.set("Content-Type", "application/json");
   }
 
-  const response = await fetch(`${API}${path}`, {
+  const response = await fetchWithRetry(`${API}${path}`, {
     ...options,
     headers,
   });
@@ -183,18 +288,37 @@ function formatDate(value: string) {
   return new Date(value).toLocaleString();
 }
 
-function statusLabel(status: string) {
-  return status.replaceAll("_", " ");
+function statusLabel(status?: string) {
+  return (status ?? "unknown").replaceAll("_", " ");
 }
 
 function Login() {
   const navigate = useNavigate();
 
+  const [setupAvailable, setSetupAvailable] = useState(false);
+  const [setupMode, setSetupMode] = useState(false);
+  const [setupName, setSetupName] = useState("");
   const [phone, setPhone] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
 
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    fetchWithRetry(`${API}/auth/setup/status`, {})
+      .then(async (response) => {
+        if (!response.ok) return;
+        const data = await response.json();
+        if (!cancelled) setSetupAvailable(data.available === true);
+      })
+      .catch(() => undefined);
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   async function handleLogin(event: React.FormEvent) {
     event.preventDefault();
@@ -203,7 +327,7 @@ function Login() {
     setError("");
 
     try {
-      const response = await fetch(`${API}/auth/login`, {
+      const response = await fetchWithRetry(`${API}/auth/login`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -234,18 +358,68 @@ function Login() {
     }
   }
 
+  async function handleSetup(event: React.FormEvent) {
+    event.preventDefault();
+    setLoading(true);
+    setError("");
+
+    try {
+      const response = await fetchWithRetry(`${API}/auth/setup`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          name: setupName,
+          phone,
+          password,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(await readError(response));
+      }
+
+      const data = await response.json();
+      localStorage.setItem("token", data.token);
+      navigate("/");
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Failed to create organization account"
+      );
+    } finally {
+      setLoading(false);
+    }
+  }
+
   return (
     <div className="login-page">
       <div className="login-card">
+        <NetworkRetryNotice />
         <div className="brand-mark">N</div>
 
         <p className="eyebrow">NEPHOT</p>
-        <h1>Order Management</h1>
+        <h1>{setupMode ? "Create your organization account" : "Order Management"}</h1>
         <p className="muted">
-          Sign in to manage customers, products and orders.
+          {setupMode
+            ? "Set up the first owner account for your OMS."
+            : "Sign in to manage customers, products and orders."}
         </p>
 
-        <form onSubmit={handleLogin} className="stack">
+        <form onSubmit={setupMode ? handleSetup : handleLogin} className="stack">
+          {setupMode && (
+            <label>
+              Name
+              <input
+                value={setupName}
+                onChange={(event) => setSetupName(event.target.value)}
+                required
+              />
+            </label>
+          )}
+
           <label>
             Phone
             <input
@@ -277,9 +451,128 @@ function Login() {
             type="submit"
             disabled={loading}
           >
-            {loading ? "Signing in..." : "Sign in"}
+            {loading
+              ? setupMode ? "Creating account..." : "Signing in..."
+              : setupMode ? "Create organization account" : "Sign in"}
           </button>
         </form>
+
+        {setupMode ? (
+          <button
+            className="button ghost full"
+            type="button"
+            onClick={() => {
+              setSetupMode(false);
+              setError("");
+            }}
+          >
+            Back to sign in
+          </button>
+        ) : setupAvailable ? (
+          <button
+            className="button ghost full"
+            type="button"
+            onClick={() => setSetupMode(true)}
+          >
+            Create organization account
+          </button>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function Invitation() {
+  const { token: invitationToken } = useParams();
+  const navigate = useNavigate();
+  const [name, setName] = useState("");
+  const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [activated, setActivated] = useState(false);
+
+  useEffect(() => {
+    if (!invitationToken) {
+      setError("Invitation is invalid or expired.");
+      setLoading(false);
+      return;
+    }
+
+    fetchWithRetry(`${API}/auth/invitation/${invitationToken}`, {})
+      .then(async (response) => {
+        if (!response.ok) throw new Error(await readError(response));
+        const data = await response.json();
+        setName(data.name || "");
+      })
+      .catch((err) => setError(err instanceof Error ? err.message : "Invitation is invalid or expired."))
+      .finally(() => setLoading(false));
+  }, [invitationToken]);
+
+  async function activate(event: React.FormEvent) {
+    event.preventDefault();
+    if (password !== confirmPassword) {
+      setError("Passwords do not match.");
+      return;
+    }
+    if (!invitationToken) return;
+
+    setSaving(true);
+    setError("");
+    try {
+      const response = await fetchWithRetry(`${API}/auth/accept-invitation/${invitationToken}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password }),
+      });
+      if (!response.ok) throw new Error(await readError(response));
+      setActivated(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to activate account");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="login-page">
+      <div className="login-card">
+        <div className="brand-mark">N</div>
+        {activated ? (
+          <>
+            <p className="eyebrow">Nephot OMS</p>
+            <h1>Account activated</h1>
+            <p className="muted">Your account is ready. Sign in with the password you created.</p>
+            <button className="button primary full" type="button" onClick={() => navigate("/login")}>Go to sign in</button>
+          </>
+        ) : loading ? (
+          <p className="muted">Checking invitation...</p>
+        ) : error && !name ? (
+          <div className="alert error">{error}</div>
+        ) : (
+          <>
+            <p className="eyebrow">Nephot OMS</p>
+            <h1>You've been invited</h1>
+            <p className="muted">Create your own password to activate this account.</p>
+            <form className="stack" onSubmit={activate}>
+              <label>
+                Name
+                <input value={name} readOnly />
+              </label>
+              <label>
+                Create password
+                <input type="password" minLength={8} value={password} onChange={(event) => setPassword(event.target.value)} required />
+              </label>
+              <label>
+                Confirm password
+                <input type="password" minLength={8} value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} required />
+              </label>
+              {error && <div className="alert error">{error}</div>}
+              <button className="button primary full" type="submit" disabled={saving}>{saving ? "Activating..." : "Activate account"}</button>
+            </form>
+          </>
+        )}
       </div>
     </div>
   );
@@ -314,6 +607,7 @@ function Layout({ children }: { children: React.ReactNode }) {
           {(role === "admin" || role === "superadmin") && (
             <Link to="/couriers">Couriers</Link>
           )}
+          {(role === "admin" || role === "superadmin") && <Link to="/users">Users</Link>}
         </nav>
 
         <div className="sidebar-bottom">
@@ -343,7 +637,10 @@ function Layout({ children }: { children: React.ReactNode }) {
           </div>
         </header>
 
-        <main className="content">{children}</main>
+        <main className="content">
+          <NetworkRetryNotice />
+          {children}
+        </main>
       </div>
     </div>
   );
@@ -618,7 +915,8 @@ function Customers() {
         throw new Error(await readError(response));
       }
 
-      setCustomers(await response.json());
+      const data = await response.json();
+      setCustomers(data.map(normalizeCustomer));
     } catch (err) {
       setError(
         err instanceof Error
@@ -743,7 +1041,11 @@ function CustomerForm() {
         throw new Error(await readError(response));
       }
 
-      const customer = await response.json();
+      const customer = normalizeCustomer(await response.json());
+
+      if (!customer.id) {
+        throw new Error("Customer was created without an ID");
+      }
 
       navigate(`/customers/${customer.id}`);
     } catch (err) {
@@ -835,7 +1137,7 @@ function CustomerDetail() {
 
   useEffect(() => {
     async function load() {
-      if (!id) return;
+      if (!id || id === "undefined") return;
 
       try {
         const response = await apiFetch(`/customers/${id}`);
@@ -844,7 +1146,7 @@ function CustomerDetail() {
           throw new Error(await readError(response));
         }
 
-        setCustomer(await response.json());
+        setCustomer(normalizeCustomer(await response.json()));
 
         const historyResponse = await apiFetch(`/customers/${id}/history`);
         if (historyResponse.ok) setOrders(await historyResponse.json());
@@ -928,8 +1230,27 @@ function Products() {
 
   const [products, setProducts] = useState<Product[]>([]);
   const [search, setSearch] = useState("");
+  const [showSuggestions, setShowSuggestions] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const searchRef = useRef<HTMLDivElement>(null);
+
+  const suggestions = search.trim().length >= 2
+    ? products
+        .filter((product) => product.name.toLowerCase().includes(search.trim().toLowerCase()))
+        .slice(0, 8)
+    : [];
+
+  useEffect(() => {
+    function closeSuggestions(event: MouseEvent) {
+      if (searchRef.current && !searchRef.current.contains(event.target as Node)) {
+        setShowSuggestions(false);
+      }
+    }
+
+    document.addEventListener("mousedown", closeSuggestions);
+    return () => document.removeEventListener("mousedown", closeSuggestions);
+  }, []);
 
   async function load(value = search) {
     setLoading(true);
@@ -944,7 +1265,8 @@ function Products() {
         throw new Error(await readError(response));
       }
 
-      setProducts(await response.json());
+      const data = await response.json();
+      setProducts(data.map(normalizeProduct));
     } catch (err) {
       setError(
         err instanceof Error
@@ -969,7 +1291,7 @@ function Products() {
         action={
           role === "admin" || role === "superadmin" ? (
             <Link to="/products/new" className="button primary">
-              New product
+              Create Product
             </Link>
           ) : undefined
         }
@@ -983,11 +1305,36 @@ function Products() {
             load();
           }}
         >
-          <input
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            placeholder="Search products..."
-          />
+          <div className="product-search" ref={searchRef}>
+            <input
+              value={search}
+              onFocus={() => setShowSuggestions(true)}
+              onChange={(event) => {
+                setSearch(event.target.value);
+                setShowSuggestions(true);
+              }}
+              placeholder="Search products..."
+            />
+            {showSuggestions && suggestions.length > 0 && (
+              <div className="product-suggestions">
+                {suggestions.map((product) => (
+                  <button
+                    className="product-suggestion"
+                    key={product.id}
+                    type="button"
+                    onClick={() => {
+                      setSearch(product.name);
+                      setShowSuggestions(false);
+                      load(product.name);
+                    }}
+                  >
+                    <strong>{product.name}</strong>
+                    <span>Rs. {money(product.price)}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
           <button className="button secondary" type="submit">
             Search
           </button>
@@ -2329,6 +2676,214 @@ function FollowUps() {
   );
 }
 
+function Users() {
+  const currentRole = getRole();
+  const [users, setUsers] = useState<User[]>([]);
+  const [name, setName] = useState("");
+  const [phone, setPhone] = useState("");
+  const [role, setRole] = useState<Role>("staff");
+  const [invitationURL, setInvitationURL] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
+
+  async function loadUsers() {
+    setLoading(true);
+    setError("");
+    try {
+      const response = await apiFetch("/users");
+      if (!response.ok) throw new Error(await readError(response));
+      setUsers(await response.json());
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load users");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    loadUsers();
+  }, []);
+
+  async function createUser(event: React.FormEvent) {
+    event.preventDefault();
+    setSaving(true);
+    setError("");
+    setMessage("");
+    try {
+      const response = await apiFetch("/users", {
+        method: "POST",
+        body: JSON.stringify({ name, phone, role }),
+      });
+      if (!response.ok) throw new Error(await readError(response));
+      const data = await response.json();
+      setName("");
+      setPhone("");
+      setInvitationURL(data.invitation_url || "");
+      setMessage("Invitation created. Share the invitation URL securely.");
+      await loadUsers();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to create user");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function resendInvitation(id: string) {
+    setSaving(true);
+    setError("");
+    setMessage("");
+    try {
+      const response = await apiFetch(`/users/${id}/resend-invitation`, { method: "POST" });
+      if (!response.ok) throw new Error(await readError(response));
+      const data = await response.json();
+      setInvitationURL(data.invitation_url || "");
+      setMessage("Invitation renewed. Share the new invitation URL securely.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to resend invitation");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function revokeInvitation(id: string) {
+    setSaving(true);
+    setError("");
+    setMessage("");
+    try {
+      const response = await apiFetch(`/users/${id}/revoke-invitation`, { method: "POST" });
+      if (!response.ok) throw new Error(await readError(response));
+      setMessage("Invitation revoked.");
+      await loadUsers();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to revoke invitation");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function updateUser(id: string, body: Record<string, unknown>, successMessage: string) {
+    setSaving(true);
+    setError("");
+    setMessage("");
+    try {
+      const response = await apiFetch(`/users/${id}`, {
+        method: "PATCH",
+        body: JSON.stringify(body),
+      });
+      if (!response.ok) throw new Error(await readError(response));
+      setMessage(successMessage);
+      await loadUsers();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to update user");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Layout>
+      <PageHeader
+        eyebrow="Administration"
+        title="Users"
+        description="Invite and manage internal Admin and Staff accounts."
+      />
+
+      {error && <div className="alert error">{error}</div>}
+      {message && <div className="alert success">{message}</div>}
+
+      <div className="detail-grid">
+        <section className="card form-card">
+          <div className="section-heading">
+            <div>
+              <span className="eyebrow">New account</span>
+              <h2>Create user</h2>
+            </div>
+          </div>
+          <form className="stack" onSubmit={createUser}>
+            <div className="form-grid">
+              <label>
+                Name
+                <input value={name} onChange={(event) => setName(event.target.value)} required />
+              </label>
+              <label>
+                Phone
+                <input value={phone} onChange={(event) => setPhone(event.target.value)} required />
+              </label>
+              <label>
+                Role
+                <select value={role} onChange={(event) => setRole(event.target.value as Role)}>
+                  <option value="staff">Staff</option>
+                  {currentRole === "superadmin" && <option value="admin">Admin</option>}
+                </select>
+              </label>
+            </div>
+            <p className="muted small">The invited user will create their own password from the invitation.</p>
+            <button className="button primary" type="submit" disabled={saving}>
+              {saving ? "Sending..." : "Send Invitation"}
+            </button>
+          </form>
+          {invitationURL && (
+            <div className="alert success invitation-url">
+              Invitation URL: <a href={invitationURL}>{invitationURL}</a>
+            </div>
+          )}
+        </section>
+
+        <section className="card table-card">
+          <div className="section-heading">
+            <div>
+              <span className="eyebrow">Accounts</span>
+              <h2>Internal users</h2>
+            </div>
+          </div>
+          {loading ? (
+            <p className="muted">Loading users...</p>
+          ) : users.length === 0 ? (
+            <EmptyState message="No users found." />
+          ) : (
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr><th>Name</th><th>Phone</th><th>Role</th><th>Status</th><th /></tr>
+                </thead>
+                <tbody>
+                  {users.map((user) => (
+                    <tr key={user.id}>
+                      <td><strong>{user.name}</strong></td>
+                      <td>{user.phone}</td>
+                      <td>{user.role}</td>
+                      <td>{user.status || (user.is_active ? "Active" : "Inactive")}</td>
+                      <td>
+                        {user.role !== "superadmin" && (
+                          <div className="user-actions">
+                            {user.status === "invited" ? (
+                              <>
+                                <button className="button ghost" type="button" disabled={saving} onClick={() => resendInvitation(user.id)}>Resend invitation</button>
+                                <button className="button ghost" type="button" disabled={saving} onClick={() => revokeInvitation(user.id)}>Revoke invitation</button>
+                              </>
+                            ) : (
+                              <button className="button ghost" type="button" disabled={saving} onClick={() => updateUser(user.id, { is_active: !user.is_active }, user.is_active ? "User deactivated." : "User activated.")}>
+                                {user.is_active ? "Deactivate" : "Activate"}
+                              </button>
+                            )}
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
+      </div>
+
+    </Layout>
+  );
+}
+
 function Couriers() {
   const [couriers, setCouriers] = useState<Courier[]>([]);
   const [locations, setLocations] = useState<CourierLocation[]>([]);
@@ -2474,6 +3029,7 @@ export default function App() {
     <BrowserRouter>
       <Routes>
         <Route path="/login" element={<Login />} />
+        <Route path="/invite/:token" element={<Invitation />} />
 
         <Route
           path="/"
@@ -2588,6 +3144,15 @@ export default function App() {
           element={
             <RoleProtectedRoute roles={["admin", "superadmin"]}>
               <Couriers />
+            </RoleProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/users"
+          element={
+            <RoleProtectedRoute roles={["admin", "superadmin"]}>
+              <Users />
             </RoleProtectedRoute>
           }
         />

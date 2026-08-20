@@ -15,6 +15,7 @@ import (
 	"oms-backend/internal/orders"
 	"oms-backend/internal/products"
 	"oms-backend/internal/reports"
+	"oms-backend/internal/users"
 )
 
 func TestPhase3RoutesUseRealRouterAndRBAC(t *testing.T) {
@@ -40,7 +41,7 @@ func TestPhase3RoutesUseRealRouterAndRBAC(t *testing.T) {
 	productHandler := products.NewHandler(queries)
 	courierHandler := couriers.NewHandler(queries)
 	reportHandler := reports.NewHandler(queries)
-	router := NewRouter(jwtSecret, authHandler, orderHandler, customerHandler, productHandler, courierHandler, reportHandler)
+	router := NewRouter(jwtSecret, authHandler, orderHandler, customerHandler, productHandler, courierHandler, reportHandler, users.NewHandler(queries))
 
 	staffToken, err := auth.GenerateToken("test-staff-user", "staff", jwtSecret)
 	if err != nil {
@@ -107,4 +108,18 @@ func TestPhase3RoutesUseRealRouterAndRBAC(t *testing.T) {
 		t.Fatalf("staff CSV export should return 403 from the real router, got %d: %s", exportRecording.Code, exportRecording.Body.String())
 	}
 
+}
+
+func TestAllowedOrigins(t *testing.T) {
+	t.Setenv("ALLOWED_ORIGINS", "https://one.example, http://localhost:5173")
+	origins := allowedOrigins()
+	if len(origins) != 2 || origins[0] != "https://one.example" || origins[1] != "http://localhost:5173" {
+		t.Fatalf("unexpected configured origins: %#v", origins)
+	}
+
+	t.Setenv("ALLOWED_ORIGINS", "")
+	origins = allowedOrigins()
+	if len(origins) != 1 || origins[0] != "https://frontend398745lkajsgd.onrender.com" {
+		t.Fatalf("unexpected fallback origins: %#v", origins)
+	}
 }

@@ -1,16 +1,25 @@
 package auth
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"os"
+	"strings"
 
 	"oms-backend/internal/api"
 	db "oms-backend/internal/db/generated"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type Handler struct {
 	Queries *db.Queries
+	Pool    *pgxpool.Pool
+	BeginTx func(context.Context) (pgx.Tx, error)
 }
 
 type loginRequest struct {
@@ -22,6 +31,20 @@ type loginResponse struct {
 	Token string `json:"token"`
 }
 
+type setupRequest struct {
+	Name     string `json:"name"`
+	Phone    string `json:"phone"`
+	Password string `json:"password"`
+}
+
+type invitationPasswordRequest struct {
+	Password string `json:"password"`
+}
+
+func NormalizePhone(phone string) string {
+	return strings.TrimSpace(phone)
+}
+
 func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 	var req loginRequest
 
@@ -30,8 +53,13 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, err := h.Queries.GetUserByPhone(r.Context(), req.Phone)
+	user, err := h.Queries.GetUserByPhone(r.Context(), NormalizePhone(req.Phone))
 	if err != nil {
+		api.WriteError(w, http.StatusUnauthorized, "INVALID_CREDENTIALS", "invalid credentials")
+		return
+	}
+
+	if !user.IsActive {
 		api.WriteError(w, http.StatusUnauthorized, "INVALID_CREDENTIALS", "invalid credentials")
 		return
 	}
@@ -58,6 +86,183 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(loginResponse{
 		Token: token,
 	})
+}
+
+func (h *Handler) SetupStatus(w http.ResponseWriter, r *http.Request) {
+	hasUsers, err := h.Queries.GetSetupStatus(r.Context())
+	if err != nil {
+		api.WriteError(w, http.StatusInternalServerError, "SETUP_STATUS_FAILED", "failed to check setup status")
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]bool{"available": !hasUsers})
+}
+
+func (h *Handler) Setup(w http.ResponseWriter, r *http.Request) {
+	if strings.HasPrefix(strings.TrimSpace(r.Header.Get("Authorization")), "Bearer ") {
+		api.WriteError(w, http.StatusForbidden, "SETUP_UNAVAILABLE", "initial setup is unavailable")
+		return
+	}
+
+	var req setupRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		api.WriteError(w, http.StatusBadRequest, "INVALID_REQUEST", "invalid request")
+		return
+	}
+
+	req.Name = strings.TrimSpace(req.Name)
+	req.Phone = NormalizePhone(req.Phone)
+	req.Password = strings.TrimSpace(req.Password)
+	if req.Name == "" || req.Phone == "" || req.Password == "" {
+		api.WriteError(w, http.StatusBadRequest, "REQUIRED_FIELDS", "name, phone, and password are required")
+		return
+	}
+	if len(req.Password) < 8 {
+		api.WriteError(w, http.StatusBadRequest, "WEAK_PASSWORD", "password must be at least 8 characters")
+		return
+	}
+
+	hash, err := HashPassword(req.Password)
+	if err != nil {
+		api.WriteError(w, http.StatusInternalServerError, "PASSWORD_HASH_FAILED", "failed to secure password")
+		return
+	}
+
+	if h.Pool == nil && h.BeginTx == nil {
+		api.WriteError(w, http.StatusInternalServerError, "SETUP_FAILED", "failed to create initial account")
+		return
+	}
+	begin := h.BeginTx
+	if begin == nil {
+		begin = h.Pool.Begin
+	}
+	tx, err := begin(r.Context())
+	if err != nil {
+		api.WriteError(w, http.StatusInternalServerError, "SETUP_FAILED", "failed to create initial account")
+		return
+	}
+	defer tx.Rollback(r.Context())
+
+	if _, err := tx.Exec(r.Context(), "SELECT pg_advisory_xact_lock(834271)"); err != nil {
+		api.WriteError(w, http.StatusInternalServerError, "SETUP_FAILED", "failed to create initial account")
+		return
+	}
+	queries := h.Queries.WithTx(tx)
+	hasUsers, err := queries.GetSetupStatus(r.Context())
+	if err != nil {
+		api.WriteError(w, http.StatusInternalServerError, "SETUP_FAILED", "failed to create initial account")
+		return
+	}
+	if hasUsers {
+		api.WriteError(w, http.StatusConflict, "SETUP_UNAVAILABLE", "initial setup is unavailable")
+		return
+	}
+
+	user, err := queries.CreateUser(r.Context(), db.CreateUserParams{
+		Name: req.Name, Phone: req.Phone, PasswordHash: hash, Role: db.UserRoleSuperadmin,
+	})
+	if err != nil {
+		api.WriteError(w, http.StatusInternalServerError, "SETUP_FAILED", "failed to create initial account")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		api.WriteError(w, http.StatusInternalServerError, "SETUP_FAILED", "failed to create initial account")
+		return
+	}
+
+	secret := os.Getenv("JWT_SECRET")
+	token, err := GenerateToken(user.ID.String(), string(user.Role), secret)
+	if err != nil {
+		api.WriteError(w, http.StatusInternalServerError, "TOKEN_GENERATION_FAILED", "failed to create session")
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(loginResponse{Token: token})
+}
+
+func (h *Handler) GetInvitation(w http.ResponseWriter, r *http.Request) {
+	token := chi.URLParam(r, "token")
+	if token == "" {
+		api.WriteError(w, http.StatusNotFound, "INVITATION_NOT_FOUND", "invitation not found")
+		return
+	}
+
+	invitation, err := h.Queries.GetInvitation(r.Context(), pgtype.Text{String: HashInvitationToken(token), Valid: true})
+	if err != nil {
+		api.WriteError(w, http.StatusGone, "INVITATION_INVALID", "invitation is invalid or expired")
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]string{
+		"name": invitation.Name,
+		"role": string(invitation.Role),
+	})
+}
+
+func (h *Handler) AcceptInvitation(w http.ResponseWriter, r *http.Request) {
+	token := chi.URLParam(r, "token")
+	var req invitationPasswordRequest
+	if token == "" || json.NewDecoder(r.Body).Decode(&req) != nil {
+		api.WriteError(w, http.StatusBadRequest, "INVALID_REQUEST", "invalid request")
+		return
+	}
+	req.Password = strings.TrimSpace(req.Password)
+	if len(req.Password) < 8 {
+		api.WriteError(w, http.StatusBadRequest, "WEAK_PASSWORD", "password must be at least 8 characters")
+		return
+	}
+
+	hash, err := HashPassword(req.Password)
+	if err != nil {
+		api.WriteError(w, http.StatusInternalServerError, "PASSWORD_HASH_FAILED", "failed to secure password")
+		return
+	}
+	if h.Pool == nil && h.BeginTx == nil {
+		api.WriteError(w, http.StatusInternalServerError, "INVITATION_FAILED", "failed to activate account")
+		return
+	}
+	begin := h.BeginTx
+	if begin == nil {
+		begin = h.Pool.Begin
+	}
+	tx, err := begin(r.Context())
+	if err != nil {
+		api.WriteError(w, http.StatusInternalServerError, "INVITATION_FAILED", "failed to activate account")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	if _, err := tx.Exec(r.Context(), "SELECT pg_advisory_xact_lock(834272)"); err != nil {
+		api.WriteError(w, http.StatusInternalServerError, "INVITATION_FAILED", "failed to activate account")
+		return
+	}
+
+	queries := h.Queries.WithTx(tx)
+	invitation, err := queries.GetInvitation(r.Context(), pgtype.Text{String: HashInvitationToken(token), Valid: true})
+	if err != nil {
+		api.WriteError(w, http.StatusGone, "INVITATION_INVALID", "invitation is invalid or expired")
+		return
+	}
+	if _, err := queries.AcceptInvitation(r.Context(), db.AcceptInvitationParams{
+		ID: invitation.ID, PasswordHash: hash,
+		InvitationTokenHash: pgtype.Text{String: HashInvitationToken(token), Valid: true},
+	}); err != nil {
+		if err == pgx.ErrNoRows {
+			api.WriteError(w, http.StatusGone, "INVITATION_INVALID", "invitation is invalid or expired")
+			return
+		}
+		api.WriteError(w, http.StatusInternalServerError, "INVITATION_FAILED", "failed to activate account")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		api.WriteError(w, http.StatusInternalServerError, "INVITATION_FAILED", "failed to activate account")
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]string{"message": "account activated"})
 }
 
 func Me(w http.ResponseWriter, r *http.Request) {

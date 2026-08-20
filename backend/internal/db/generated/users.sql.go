@@ -7,7 +7,106 @@ package db
 
 import (
 	"context"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
+
+const acceptInvitation = `-- name: AcceptInvitation :one
+UPDATE users
+SET password_hash = $2,
+        is_active = TRUE,
+        invitation_token_hash = NULL,
+        invitation_expires_at = NULL
+WHERE id = $1
+    AND invitation_token_hash = $3
+    AND is_active = FALSE
+    AND invitation_expires_at > NOW()
+RETURNING id, name, phone, role, is_active, created_at
+`
+
+type AcceptInvitationParams struct {
+	ID                  pgtype.UUID
+	PasswordHash        string
+	InvitationTokenHash pgtype.Text
+}
+
+type AcceptInvitationRow struct {
+	ID        pgtype.UUID
+	Name      string
+	Phone     string
+	Role      UserRole
+	IsActive  bool
+	CreatedAt pgtype.Timestamptz
+}
+
+func (q *Queries) AcceptInvitation(ctx context.Context, arg AcceptInvitationParams) (AcceptInvitationRow, error) {
+	row := q.db.QueryRow(ctx, acceptInvitation, arg.ID, arg.PasswordHash, arg.InvitationTokenHash)
+	var i AcceptInvitationRow
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Phone,
+		&i.Role,
+		&i.IsActive,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const createInvitedUser = `-- name: CreateInvitedUser :one
+INSERT INTO users (
+        name,
+        phone,
+        password_hash,
+        role,
+        is_active,
+        invitation_token_hash,
+        invitation_expires_at
+)
+VALUES ($1, $2, $3, $4, FALSE, $5, $6)
+RETURNING id, name, phone, role, is_active, invitation_expires_at, created_at
+`
+
+type CreateInvitedUserParams struct {
+	Name                string
+	Phone               string
+	PasswordHash        string
+	Role                UserRole
+	InvitationTokenHash pgtype.Text
+	InvitationExpiresAt pgtype.Timestamptz
+}
+
+type CreateInvitedUserRow struct {
+	ID                  pgtype.UUID
+	Name                string
+	Phone               string
+	Role                UserRole
+	IsActive            bool
+	InvitationExpiresAt pgtype.Timestamptz
+	CreatedAt           pgtype.Timestamptz
+}
+
+func (q *Queries) CreateInvitedUser(ctx context.Context, arg CreateInvitedUserParams) (CreateInvitedUserRow, error) {
+	row := q.db.QueryRow(ctx, createInvitedUser,
+		arg.Name,
+		arg.Phone,
+		arg.PasswordHash,
+		arg.Role,
+		arg.InvitationTokenHash,
+		arg.InvitationExpiresAt,
+	)
+	var i CreateInvitedUserRow
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Phone,
+		&i.Role,
+		&i.IsActive,
+		&i.InvitationExpiresAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
 
 const createUser = `-- name: CreateUser :one
 INSERT INTO users (
@@ -28,6 +127,7 @@ RETURNING
     phone,
     password_hash,
     role,
+    is_active,
     created_at
 `
 
@@ -38,23 +138,75 @@ type CreateUserParams struct {
 	Role         UserRole
 }
 
-func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, error) {
+type CreateUserRow struct {
+	ID           pgtype.UUID
+	Name         string
+	Phone        string
+	PasswordHash string
+	Role         UserRole
+	IsActive     bool
+	CreatedAt    pgtype.Timestamptz
+}
+
+func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (CreateUserRow, error) {
 	row := q.db.QueryRow(ctx, createUser,
 		arg.Name,
 		arg.Phone,
 		arg.PasswordHash,
 		arg.Role,
 	)
-	var i User
+	var i CreateUserRow
 	err := row.Scan(
 		&i.ID,
 		&i.Name,
 		&i.Phone,
 		&i.PasswordHash,
 		&i.Role,
+		&i.IsActive,
 		&i.CreatedAt,
 	)
 	return i, err
+}
+
+const getInvitation = `-- name: GetInvitation :one
+SELECT id, name, phone, role
+FROM users
+WHERE invitation_token_hash = $1
+    AND is_active = FALSE
+    AND invitation_expires_at > NOW()
+LIMIT 1
+`
+
+type GetInvitationRow struct {
+	ID    pgtype.UUID
+	Name  string
+	Phone string
+	Role  UserRole
+}
+
+func (q *Queries) GetInvitation(ctx context.Context, invitationTokenHash pgtype.Text) (GetInvitationRow, error) {
+	row := q.db.QueryRow(ctx, getInvitation, invitationTokenHash)
+	var i GetInvitationRow
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Phone,
+		&i.Role,
+	)
+	return i, err
+}
+
+const getSetupStatus = `-- name: GetSetupStatus :one
+SELECT EXISTS (
+    SELECT 1 FROM users
+) AS has_users
+`
+
+func (q *Queries) GetSetupStatus(ctx context.Context) (bool, error) {
+	row := q.db.QueryRow(ctx, getSetupStatus)
+	var has_users bool
+	err := row.Scan(&has_users)
+	return has_users, err
 }
 
 const getUserByPhone = `-- name: GetUserByPhone :one
@@ -64,21 +216,204 @@ SELECT
     phone,
     password_hash,
     role,
+    is_active,
     created_at
 FROM users
 WHERE phone = $1
 LIMIT 1
 `
 
-func (q *Queries) GetUserByPhone(ctx context.Context, phone string) (User, error) {
+type GetUserByPhoneRow struct {
+	ID           pgtype.UUID
+	Name         string
+	Phone        string
+	PasswordHash string
+	Role         UserRole
+	IsActive     bool
+	CreatedAt    pgtype.Timestamptz
+}
+
+func (q *Queries) GetUserByPhone(ctx context.Context, phone string) (GetUserByPhoneRow, error) {
 	row := q.db.QueryRow(ctx, getUserByPhone, phone)
-	var i User
+	var i GetUserByPhoneRow
 	err := row.Scan(
 		&i.ID,
 		&i.Name,
 		&i.Phone,
 		&i.PasswordHash,
 		&i.Role,
+		&i.IsActive,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const listUsers = `-- name: ListUsers :many
+SELECT id, name, phone, role, is_active,
+             invitation_token_hash IS NOT NULL
+             AND invitation_expires_at > NOW() AS invitation_pending,
+             created_at
+FROM users
+ORDER BY created_at ASC
+`
+
+type ListUsersRow struct {
+	ID                pgtype.UUID
+	Name              string
+	Phone             string
+	Role              UserRole
+	IsActive          bool
+	InvitationPending pgtype.Bool
+	CreatedAt         pgtype.Timestamptz
+}
+
+func (q *Queries) ListUsers(ctx context.Context) ([]ListUsersRow, error) {
+	rows, err := q.db.Query(ctx, listUsers)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListUsersRow
+	for rows.Next() {
+		var i ListUsersRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.Phone,
+			&i.Role,
+			&i.IsActive,
+			&i.InvitationPending,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const resetUserPassword = `-- name: ResetUserPassword :one
+UPDATE users
+SET password_hash = $2
+WHERE id = $1
+RETURNING id, name, phone, role, is_active, created_at
+`
+
+type ResetUserPasswordParams struct {
+	ID           pgtype.UUID
+	PasswordHash string
+}
+
+type ResetUserPasswordRow struct {
+	ID        pgtype.UUID
+	Name      string
+	Phone     string
+	Role      UserRole
+	IsActive  bool
+	CreatedAt pgtype.Timestamptz
+}
+
+func (q *Queries) ResetUserPassword(ctx context.Context, arg ResetUserPasswordParams) (ResetUserPasswordRow, error) {
+	row := q.db.QueryRow(ctx, resetUserPassword, arg.ID, arg.PasswordHash)
+	var i ResetUserPasswordRow
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Phone,
+		&i.Role,
+		&i.IsActive,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const revokeInvitation = `-- name: RevokeInvitation :exec
+UPDATE users
+SET invitation_token_hash = NULL,
+        invitation_expires_at = NULL
+WHERE id = $1
+    AND is_active = FALSE
+`
+
+func (q *Queries) RevokeInvitation(ctx context.Context, id pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, revokeInvitation, id)
+	return err
+}
+
+const updateInvitation = `-- name: UpdateInvitation :one
+UPDATE users
+SET invitation_token_hash = $2,
+        invitation_expires_at = $3,
+        is_active = FALSE
+WHERE id = $1
+    AND is_active = FALSE
+RETURNING id, name, phone, role, is_active, invitation_expires_at, created_at
+`
+
+type UpdateInvitationParams struct {
+	ID                  pgtype.UUID
+	InvitationTokenHash pgtype.Text
+	InvitationExpiresAt pgtype.Timestamptz
+}
+
+type UpdateInvitationRow struct {
+	ID                  pgtype.UUID
+	Name                string
+	Phone               string
+	Role                UserRole
+	IsActive            bool
+	InvitationExpiresAt pgtype.Timestamptz
+	CreatedAt           pgtype.Timestamptz
+}
+
+func (q *Queries) UpdateInvitation(ctx context.Context, arg UpdateInvitationParams) (UpdateInvitationRow, error) {
+	row := q.db.QueryRow(ctx, updateInvitation, arg.ID, arg.InvitationTokenHash, arg.InvitationExpiresAt)
+	var i UpdateInvitationRow
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Phone,
+		&i.Role,
+		&i.IsActive,
+		&i.InvitationExpiresAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const updateUserActive = `-- name: UpdateUserActive :one
+UPDATE users
+SET is_active = $2
+WHERE id = $1
+RETURNING id, name, phone, role, is_active, created_at
+`
+
+type UpdateUserActiveParams struct {
+	ID       pgtype.UUID
+	IsActive bool
+}
+
+type UpdateUserActiveRow struct {
+	ID        pgtype.UUID
+	Name      string
+	Phone     string
+	Role      UserRole
+	IsActive  bool
+	CreatedAt pgtype.Timestamptz
+}
+
+func (q *Queries) UpdateUserActive(ctx context.Context, arg UpdateUserActiveParams) (UpdateUserActiveRow, error) {
+	row := q.db.QueryRow(ctx, updateUserActive, arg.ID, arg.IsActive)
+	var i UpdateUserActiveRow
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Phone,
+		&i.Role,
+		&i.IsActive,
 		&i.CreatedAt,
 	)
 	return i, err
