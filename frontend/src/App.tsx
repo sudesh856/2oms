@@ -112,11 +112,30 @@ type FollowUp = {
 
 type Courier = { id: string; name: string };
 
+function normalizeCourier(value: Courier & { ID?: string; Name?: string }): Courier {
+  return {
+    id: value.id ?? value.ID ?? "",
+    name: value.name ?? value.Name ?? "",
+  };
+}
+
 type CourierLocation = {
   id: string;
   location_name: string;
   delivery_charge?: unknown;
 };
+
+function normalizeCourierLocation(value: CourierLocation & {
+  ID?: string;
+  LocationName?: string;
+  DeliveryCharge?: unknown;
+}): CourierLocation {
+  return {
+    id: value.id ?? value.ID ?? "",
+    location_name: value.location_name ?? value.LocationName ?? "",
+    delivery_charge: value.delivery_charge ?? value.DeliveryCharge,
+  };
+}
 
 type DashboardSummary = {
   today_orders: number;
@@ -2898,16 +2917,16 @@ function Couriers() {
   async function loadCouriers() {
     const response = await apiFetch("/couriers");
     if (!response.ok) throw new Error(await readError(response));
-    const data: Courier[] = await response.json();
+    const data = (await response.json()).map(normalizeCourier);
     setCouriers(data);
-    if (!selectedCourier && data[0]) setSelectedCourier(data[0].id);
+    if (!selectedCourier && data[0]?.id) setSelectedCourier(data[0].id);
   }
 
   async function loadLocations(courierID = selectedCourier) {
     if (!courierID) return;
     const response = await apiFetch(`/couriers/${courierID}/locations`);
     if (!response.ok) throw new Error(await readError(response));
-    setLocations(await response.json());
+    setLocations((await response.json()).map(normalizeCourierLocation));
   }
 
   useEffect(() => {
@@ -2960,13 +2979,13 @@ function Couriers() {
         <section className="card">
           <h2>Couriers</h2>
           <div className="stack"><input value={courierName} onChange={(event) => setCourierName(event.target.value)} placeholder="Courier name" /><button className="button primary" type="button" onClick={saveCourier}>{editingCourier ? "Save courier" : "Add courier"}</button></div>
-          <div className="compact-list">{couriers.map((courier) => <div className="compact-row" key={courier.id}><button className="text-link" type="button" onClick={() => setSelectedCourier(courier.id)}>{courier.name}</button><span><button className="button ghost" type="button" onClick={() => { setEditingCourier(courier.id); setCourierName(courier.name); }}>Edit</button><button className="button ghost" type="button" onClick={() => removeCourier(courier.id)}>Delete</button></span></div>)}</div>
+          <div className="compact-list">{couriers.map((courier) => <div className="compact-row" key={courier.id}><button className="text-link" type="button" onClick={() => setSelectedCourier(courier.id)}>{courier.name}</button><div className="courier-actions"><button className="button ghost" type="button" onClick={() => { setEditingCourier(courier.id); setCourierName(courier.name); }}>Edit</button><button className="button ghost" type="button" onClick={() => removeCourier(courier.id)}>Delete</button></div></div>)}</div>
         </section>
         <section className="card">
           <h2>Locations</h2>
           <select value={selectedCourier} onChange={(event) => setSelectedCourier(event.target.value)}><option value="">Select courier</option>{couriers.map((courier) => <option key={courier.id} value={courier.id}>{courier.name}</option>)}</select>
           <div className="stack"><input value={locationName} onChange={(event) => setLocationName(event.target.value)} placeholder="Location name" /><input value={deliveryCharge} onChange={(event) => setDeliveryCharge(event.target.value)} placeholder="Delivery charge" /><button className="button primary" type="button" disabled={!selectedCourier} onClick={saveLocation}>{editingLocation ? "Save location" : "Add location"}</button></div>
-          <div className="compact-list">{locations.map((location) => <div className="compact-row" key={location.id}><span>{location.location_name} ({money(location.delivery_charge)})</span><span><button className="button ghost" type="button" onClick={() => { setEditingLocation(location.id); setLocationName(location.location_name); setDeliveryCharge(String(location.delivery_charge ?? "")); }}>Edit</button><button className="button ghost" type="button" onClick={() => removeLocation(location.id)}>Delete</button></span></div>)}</div>
+          <div className="compact-list">{locations.map((location) => <div className="compact-row" key={location.id}><span>{location.location_name} ({money(location.delivery_charge)})</span><div className="courier-actions"><button className="button ghost" type="button" onClick={() => { setEditingLocation(location.id); setLocationName(location.location_name); setDeliveryCharge(String(location.delivery_charge ?? "")); }}>Edit</button><button className="button ghost" type="button" onClick={() => removeLocation(location.id)}>Delete</button></div></div>)}</div>
         </section>
       </div>
     </Layout>

@@ -887,6 +887,13 @@ tbody tr:hover {
   gap: 8px;
 }
 
+.courier-actions {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 @media (min-width: 560px) {
   .form-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
