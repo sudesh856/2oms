@@ -10,7 +10,7 @@ import {
   useParams,
 } from "react-router-dom";
 
-const API = "http://localhost:8080/api";
+const API = import.meta.env.VITE_API_BASE_URL || "http://localhost:8080/api";
 
 type Role = "superadmin" | "admin" | "staff";
 

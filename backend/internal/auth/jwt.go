@@ -32,6 +32,10 @@ func ParseToken(tokenString, secret string) (*Claims, error) {
 		tokenString,
 		&Claims{},
 		func(token *jwt.Token) (any, error) {
+			if token.Method != jwt.SigningMethodHS256 {
+				return nil, jwt.ErrTokenSignatureInvalid
+			}
+
 			return []byte(secret), nil
 		},
 	)
