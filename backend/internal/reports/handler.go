@@ -13,6 +13,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -80,6 +81,14 @@ func (h *Handler) CustomerHistory(w http.ResponseWriter, r *http.Request) {
 	customerID, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
 		api.WriteError(w, http.StatusBadRequest, "INVALID_CUSTOMER_ID", "invalid customer id")
+		return
+	}
+	if _, err := h.Queries.GetCustomerByID(r.Context(), db.GetCustomerByIDParams{ID: pgtype.UUID{Bytes: customerID, Valid: true}, CompanyID: companyID}); err != nil {
+		if err == pgx.ErrNoRows {
+			api.WriteError(w, http.StatusNotFound, "CUSTOMER_NOT_FOUND", "customer not found")
+			return
+		}
+		api.WriteError(w, http.StatusInternalServerError, "CUSTOMER_HISTORY_FAILED", "failed to load customer history")
 		return
 	}
 	claims, ok := auth.GetClaims(r.Context())

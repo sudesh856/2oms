@@ -62,7 +62,11 @@ func TestInvitationLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	creatorToken, err := auth.GenerateToken("00000000-0000-0000-0000-000000000001", "superadmin", secret)
+	var companyID string
+	if err := pool.QueryRow(context.Background(), "SELECT id::text FROM companies ORDER BY created_at ASC LIMIT 1").Scan(&companyID); err != nil {
+		t.Skip("no company available in database")
+	}
+	creatorToken, err := auth.GenerateToken("00000000-0000-0000-0000-000000000001", "superadmin", secret, companyID)
 	if err != nil {
 		t.Fatal(err)
 	}

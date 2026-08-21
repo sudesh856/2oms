@@ -196,10 +196,13 @@ func createTenantFixture(ctx context.Context, pool *pgxpool.Pool, suffix string)
 func cleanupTenantFixtures(t *testing.T, pool *pgxpool.Pool, companyIDs ...uuid.UUID) {
 	t.Helper()
 	ctx := context.Background()
-	for _, table := range []string{"status_history", "follow_ups", "order_items", "orders", "courier_locations", "couriers", "products", "customers", "users", "companies"} {
+	for _, table := range []string{"status_history", "follow_ups", "order_items", "orders", "courier_locations", "couriers", "products", "customers", "users"} {
 		if _, err := pool.Exec(ctx, "DELETE FROM "+table+" WHERE company_id = ANY($1)", companyIDs); err != nil {
 			t.Errorf("cleanup %s: %v", table, err)
 		}
+	}
+	if _, err := pool.Exec(ctx, "DELETE FROM companies WHERE id = ANY($1)", companyIDs); err != nil {
+		t.Errorf("cleanup companies: %v", err)
 	}
 }
 

@@ -132,6 +132,14 @@ func (h *Handler) ListLocations(w http.ResponseWriter, r *http.Request) {
 		api.WriteError(w, http.StatusBadRequest, "INVALID_COURIER_ID", "invalid courier id")
 		return
 	}
+	if _, err := h.Queries.GetCourier(r.Context(), db.GetCourierParams{ID: courierID, CompanyID: companyID}); err != nil {
+		if err == pgx.ErrNoRows {
+			api.WriteError(w, http.StatusNotFound, "COURIER_NOT_FOUND", "courier not found")
+			return
+		}
+		api.WriteError(w, http.StatusInternalServerError, "COURIER_FETCH_FAILED", "failed to get courier")
+		return
+	}
 	items, err := h.Queries.ListCourierLocations(r.Context(), db.ListCourierLocationsParams{CourierID: courierID, CompanyID: companyID})
 	if err != nil {
 		api.WriteError(w, http.StatusInternalServerError, "LOCATIONS_FETCH_FAILED", "failed to list courier locations")
