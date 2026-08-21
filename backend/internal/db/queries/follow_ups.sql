@@ -6,7 +6,8 @@ INSERT INTO follow_ups (
     preferred_day,
     next_action_date,
     note,
-    assigned_to
+    assigned_to,
+    company_id
 )
 VALUES (
     $1,
@@ -15,7 +16,8 @@ VALUES (
     $4,
     $5,
     $6,
-    $7
+    $7,
+    $8
 )
 RETURNING
     id,
@@ -31,7 +33,7 @@ RETURNING
 -- name: GetLatestFollowUpAttempt :one
 SELECT COALESCE(MAX(attempt_no), 0)::int
 FROM follow_ups
-WHERE order_id = $1;
+WHERE order_id = $1 AND company_id = $2;
 
 -- name: ListFollowUps :many
 SELECT
@@ -62,8 +64,9 @@ AND (
     $2::boolean = FALSE
     OR f.next_action = 'no_answer'
 )
+AND f.company_id = $3::uuid
 ORDER BY f.next_action_date NULLS LAST, f.created_at ASC;
 
 -- name: DeleteFollowUp :exec
 DELETE FROM follow_ups
-WHERE id = $1;
+WHERE id = $1 AND company_id = $2;

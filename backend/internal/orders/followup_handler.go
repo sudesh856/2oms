@@ -29,6 +29,11 @@ func (h *Handler) CreateFollowUp(w http.ResponseWriter, r *http.Request) {
 		api.WriteError(w, http.StatusUnauthorized, "UNAUTHORIZED", "unauthorized")
 		return
 	}
+	companyID, companyOK := auth.GetCompanyID(r.Context())
+	if !companyOK {
+		api.WriteError(w, http.StatusUnauthorized, "UNAUTHORIZED", "unauthorized")
+		return
+	}
 
 	orderUUID, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
@@ -62,14 +67,14 @@ func (h *Handler) CreateFollowUp(w http.ResponseWriter, r *http.Request) {
 	var current db.OrderStatus
 	switch claims.Role {
 	case "admin", "superadmin":
-		order, fetchErr := h.Queries.GetOrderForAdmin(r.Context(), orderID)
+		order, fetchErr := h.Queries.GetOrderForAdmin(r.Context(), db.GetOrderForAdminParams{ID: orderID, CompanyID: companyID})
 		if fetchErr != nil {
 			writeFollowUpOrderError(w, fetchErr)
 			return
 		}
 		current = order.Status
 	case "staff":
-		order, fetchErr := h.Queries.GetOrderForStaff(r.Context(), orderID)
+		order, fetchErr := h.Queries.GetOrderForStaff(r.Context(), db.GetOrderForStaffParams{ID: orderID, CompanyID: companyID})
 		if fetchErr != nil {
 			writeFollowUpOrderError(w, fetchErr)
 			return
@@ -98,7 +103,7 @@ func (h *Handler) CreateFollowUp(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	attempt, err := h.Queries.GetLatestFollowUpAttempt(r.Context(), orderID)
+	attempt, err := h.Queries.GetLatestFollowUpAttempt(r.Context(), db.GetLatestFollowUpAttemptParams{OrderID: orderID, CompanyID: companyID})
 	if err != nil {
 		api.WriteError(w, http.StatusInternalServerError, "FOLLOW_UP_FETCH_FAILED", "failed to get follow-up attempts")
 		return
@@ -109,13 +114,14 @@ func (h *Handler) CreateFollowUp(w http.ResponseWriter, r *http.Request) {
 		PreferredDay:   pgtype.Text{String: req.PreferredDay, Valid: req.PreferredDay != ""},
 		NextActionDate: date, Note: pgtype.Text{String: req.Note, Valid: req.Note != ""},
 		AssignedTo: pgtype.UUID{Bytes: assignedTo, Valid: true},
+		CompanyID:  companyID,
 	})
 	if err != nil {
 		api.WriteError(w, http.StatusInternalServerError, "FOLLOW_UP_CREATE_FAILED", "failed to create follow-up")
 		return
 	}
 	if current != db.OrderStatusFollowUp {
-		if err := NewService(h.Pool).UpdateStatus(r.Context(), orderID, current, db.OrderStatusFollowUp, pgtype.UUID{Bytes: assignedTo, Valid: true}); err != nil {
+		if err := NewService(h.Pool).UpdateStatus(r.Context(), orderID, current, db.OrderStatusFollowUp, pgtype.UUID{Bytes: assignedTo, Valid: true}, companyID); err != nil {
 			api.WriteError(w, http.StatusInternalServerError, "FOLLOW_UP_STATUS_FAILED", "failed to update order status")
 			return
 		}
@@ -135,13 +141,18 @@ func writeFollowUpOrderError(w http.ResponseWriter, err error) {
 }
 
 func (h *Handler) ListFollowUps(w http.ResponseWriter, r *http.Request) {
+	companyID, ok := auth.GetCompanyID(r.Context())
+	if !ok {
+		api.WriteError(w, http.StatusUnauthorized, "UNAUTHORIZED", "unauthorized")
+		return
+	}
 	date := pgtype.Date{}
 	if r.URL.Query().Get("due_today") == "true" {
 		now := time.Now()
 		date = pgtype.Date{Time: time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC), Valid: true}
 	}
 	unanswered := r.URL.Query().Get("unanswered") == "true"
-	items, err := h.Queries.ListFollowUps(r.Context(), db.ListFollowUpsParams{Column1: date, Column2: unanswered})
+	items, err := h.Queries.ListFollowUps(r.Context(), db.ListFollowUpsParams{Column1: date, Column2: unanswered, Column3: companyID})
 	if err != nil {
 		api.WriteError(w, http.StatusInternalServerError, "FOLLOW_UPS_FETCH_FAILED", "failed to list follow-ups")
 		return

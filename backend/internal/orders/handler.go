@@ -208,6 +208,11 @@ func writeOrdersJSON(w http.ResponseWriter, orders any, staff bool) {
 	json.NewEncoder(w).Encode(result)
 }
 func (h *Handler) GetOrder(w http.ResponseWriter, r *http.Request) {
+	companyID, companyOK := auth.GetCompanyID(r.Context())
+	if !companyOK {
+		api.WriteError(w, http.StatusUnauthorized, "UNAUTHORIZED", "unauthorized")
+		return
+	}
 	orderID, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
 		api.WriteError(w, http.StatusBadRequest, "INVALID_ORDER_ID", "invalid order id")
@@ -227,7 +232,7 @@ func (h *Handler) GetOrder(w http.ResponseWriter, r *http.Request) {
 
 	switch claims.Role {
 	case "superadmin", "admin":
-		order, err := h.Queries.GetOrderForAdmin(r.Context(), id)
+		order, err := h.Queries.GetOrderForAdmin(r.Context(), db.GetOrderForAdminParams{ID: id, CompanyID: companyID})
 		if err != nil {
 			if err == pgx.ErrNoRows {
 				api.WriteError(w, http.StatusNotFound, "ORDER_NOT_FOUND", "order not found")
@@ -242,7 +247,7 @@ func (h *Handler) GetOrder(w http.ResponseWriter, r *http.Request) {
 
 	case "staff":
 
-		order, err := h.Queries.GetOrderForStaff(r.Context(), id)
+		order, err := h.Queries.GetOrderForStaff(r.Context(), db.GetOrderForStaffParams{ID: id, CompanyID: companyID})
 		if err != nil {
 			if err == pgx.ErrNoRows {
 				api.WriteError(w, http.StatusNotFound, "ORDER_NOT_FOUND", "order not found")
@@ -261,6 +266,11 @@ func (h *Handler) GetOrder(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) ListOrders(w http.ResponseWriter, r *http.Request) {
+	companyID, companyOK := auth.GetCompanyID(r.Context())
+	if !companyOK {
+		api.WriteError(w, http.StatusUnauthorized, "UNAUTHORIZED", "unauthorized")
+		return
+	}
 	claims, ok := auth.GetClaims(r.Context())
 	if !ok {
 		api.WriteError(w, http.StatusUnauthorized, "UNAUTHORIZED", "unauthorized")
@@ -271,6 +281,7 @@ func (h *Handler) ListOrders(w http.ResponseWriter, r *http.Request) {
 		api.WriteError(w, http.StatusBadRequest, "INVALID_ORDER_FILTER", "invalid order filter")
 		return
 	}
+	params.Column10 = companyID
 
 	w.Header().Set("Content-Type", "application/json")
 
@@ -283,7 +294,7 @@ func (h *Handler) ListOrders(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if orders == nil {
-			orders = []db.Order{}
+			orders = []db.ListOrdersForAdminRow{}
 		}
 
 		writeOrdersJSON(w, orders, false)
@@ -292,7 +303,7 @@ func (h *Handler) ListOrders(w http.ResponseWriter, r *http.Request) {
 		staffParams := db.ListOrdersForStaffParams{
 			Column1: params.Column1, Column2: params.Column2, Column3: params.Column3,
 			Column4: params.Column4, Column5: params.Column5, Column6: params.Column6,
-			Column7: params.Column7, Offset: params.Offset, Limit: params.Limit,
+			Column7: params.Column7, Offset: params.Offset, Limit: params.Limit, Column10: companyID,
 		}
 		orders, err := h.Queries.ListOrdersForStaff(r.Context(), staffParams)
 		if err != nil {
@@ -371,6 +382,11 @@ func (h *Handler) UpdateStatus(w http.ResponseWriter, r *http.Request) {
 		api.WriteError(w, http.StatusUnauthorized, "UNAUTHORIZED", "unauthorized")
 		return
 	}
+	companyID, companyOK := auth.GetCompanyID(r.Context())
+	if !companyOK {
+		api.WriteError(w, http.StatusUnauthorized, "UNAUTHORIZED", "unauthorized")
+		return
+	}
 
 	orderID, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
@@ -407,7 +423,7 @@ func (h *Handler) UpdateStatus(w http.ResponseWriter, r *http.Request) {
 
 	switch claims.Role {
 	case "superadmin", "admin":
-		order, err := h.Queries.GetOrderForAdmin(r.Context(), orderIDPG)
+		order, err := h.Queries.GetOrderForAdmin(r.Context(), db.GetOrderForAdminParams{ID: orderIDPG, CompanyID: companyID})
 		if err != nil {
 			if err == pgx.ErrNoRows {
 				api.WriteError(w, http.StatusNotFound, "ORDER_NOT_FOUND", "order not found")
@@ -421,7 +437,7 @@ func (h *Handler) UpdateStatus(w http.ResponseWriter, r *http.Request) {
 		fromStatus = order.Status
 
 	case "staff":
-		order, err := h.Queries.GetOrderForStaff(r.Context(), orderIDPG)
+		order, err := h.Queries.GetOrderForStaff(r.Context(), db.GetOrderForStaffParams{ID: orderIDPG, CompanyID: companyID})
 		if err != nil {
 			if err == pgx.ErrNoRows {
 				api.WriteError(w, http.StatusNotFound, "ORDER_NOT_FOUND", "order not found")
@@ -456,6 +472,7 @@ func (h *Handler) UpdateStatus(w http.ResponseWriter, r *http.Request) {
 			Bytes: userID,
 			Valid: true,
 		},
+		companyID,
 	); err != nil {
 		if strings.Contains(err.Error(), "order not found") {
 			api.WriteError(
@@ -480,7 +497,7 @@ func (h *Handler) UpdateStatus(w http.ResponseWriter, r *http.Request) {
 
 	switch claims.Role {
 	case "superadmin", "admin":
-		order, err := h.Queries.GetOrderForAdmin(r.Context(), orderIDPG)
+		order, err := h.Queries.GetOrderForAdmin(r.Context(), db.GetOrderForAdminParams{ID: orderIDPG, CompanyID: companyID})
 		if err != nil {
 			api.WriteError(
 				w,
@@ -493,7 +510,7 @@ func (h *Handler) UpdateStatus(w http.ResponseWriter, r *http.Request) {
 		updatedOrder = order
 
 	case "staff":
-		order, err := h.Queries.GetOrderForStaff(r.Context(), orderIDPG)
+		order, err := h.Queries.GetOrderForStaff(r.Context(), db.GetOrderForStaffParams{ID: orderIDPG, CompanyID: companyID})
 		if err != nil {
 			api.WriteError(
 				w,
@@ -540,6 +557,11 @@ func (h *Handler) CreateOrder(w http.ResponseWriter, r *http.Request) {
 	createdBy, err := uuid.Parse(claims.UserID)
 	if err != nil {
 		api.WriteError(w, http.StatusInternalServerError, "INVALID_USER_ID", "invalid user id")
+		return
+	}
+	companyID, companyOK := auth.GetCompanyID(r.Context())
+	if !companyOK {
+		api.WriteError(w, http.StatusUnauthorized, "UNAUTHORIZED", "unauthorized")
 		return
 	}
 
@@ -626,6 +648,7 @@ func (h *Handler) CreateOrder(w http.ResponseWriter, r *http.Request) {
 			CodAmount:    codAmount,
 			IsStoreVisit: req.IsStoreVisit,
 			CreatedBy:    createdBy,
+			CompanyID:    uuid.UUID(companyID.Bytes),
 			Items:        items,
 		},
 		claims.Role == "staff",

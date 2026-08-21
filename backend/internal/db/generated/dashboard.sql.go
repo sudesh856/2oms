@@ -18,11 +18,13 @@ SELECT
     COUNT(*) FILTER (WHERE o.status IN ('follow_up', 'hold', 'redirected', 'cancelled', 'returned'))::int AS problem_orders,
     COUNT(*)::int AS total_orders
 FROM orders o
+WHERE o.company_id = $3::uuid
 `
 
 type GetDashboardCountsParams struct {
 	Column1 pgtype.Timestamptz
 	Column2 pgtype.Timestamptz
+	Column3 pgtype.UUID
 }
 
 type GetDashboardCountsRow struct {
@@ -33,7 +35,7 @@ type GetDashboardCountsRow struct {
 }
 
 func (q *Queries) GetDashboardCounts(ctx context.Context, arg GetDashboardCountsParams) (GetDashboardCountsRow, error) {
-	row := q.db.QueryRow(ctx, getDashboardCounts, arg.Column1, arg.Column2)
+	row := q.db.QueryRow(ctx, getDashboardCounts, arg.Column1, arg.Column2, arg.Column3)
 	var i GetDashboardCountsRow
 	err := row.Scan(
 		&i.TodayOrders,
@@ -49,6 +51,7 @@ SELECT c.name AS courier_name, COUNT(*)::int AS count
 FROM orders o
 LEFT JOIN couriers c ON c.id = o.courier_id
 WHERE o.created_at >= $1::timestamptz AND o.created_at < $2::timestamptz
+    AND o.company_id = $3::uuid
 GROUP BY c.name
 ORDER BY c.name
 `
@@ -56,6 +59,7 @@ ORDER BY c.name
 type ListDashboardCourierCountsParams struct {
 	Column1 pgtype.Timestamptz
 	Column2 pgtype.Timestamptz
+	Column3 pgtype.UUID
 }
 
 type ListDashboardCourierCountsRow struct {
@@ -64,7 +68,7 @@ type ListDashboardCourierCountsRow struct {
 }
 
 func (q *Queries) ListDashboardCourierCounts(ctx context.Context, arg ListDashboardCourierCountsParams) ([]ListDashboardCourierCountsRow, error) {
-	rows, err := q.db.Query(ctx, listDashboardCourierCounts, arg.Column1, arg.Column2)
+	rows, err := q.db.Query(ctx, listDashboardCourierCounts, arg.Column1, arg.Column2, arg.Column3)
 	if err != nil {
 		return nil, err
 	}
@@ -96,8 +100,14 @@ FROM follow_ups f
 JOIN orders o ON o.id = f.order_id
 JOIN customers c ON c.id = o.customer_id
 WHERE f.next_action_date = $1::date
+    AND f.company_id = $2::uuid
 ORDER BY f.created_at ASC
 `
+
+type ListDashboardFollowUpsDueParams struct {
+	Column1 pgtype.Date
+	Column2 pgtype.UUID
+}
 
 type ListDashboardFollowUpsDueRow struct {
 	ID             pgtype.UUID
@@ -109,8 +119,8 @@ type ListDashboardFollowUpsDueRow struct {
 	CustomerPhone  string
 }
 
-func (q *Queries) ListDashboardFollowUpsDue(ctx context.Context, dollar_1 pgtype.Date) ([]ListDashboardFollowUpsDueRow, error) {
-	rows, err := q.db.Query(ctx, listDashboardFollowUpsDue, dollar_1)
+func (q *Queries) ListDashboardFollowUpsDue(ctx context.Context, arg ListDashboardFollowUpsDueParams) ([]ListDashboardFollowUpsDueRow, error) {
+	rows, err := q.db.Query(ctx, listDashboardFollowUpsDue, arg.Column1, arg.Column2)
 	if err != nil {
 		return nil, err
 	}
@@ -140,6 +150,7 @@ func (q *Queries) ListDashboardFollowUpsDue(ctx context.Context, dollar_1 pgtype
 const listDashboardStatusCounts = `-- name: ListDashboardStatusCounts :many
 SELECT status, COUNT(*)::int AS count
 FROM orders
+WHERE company_id = $1::uuid
 GROUP BY status
 ORDER BY status
 `
@@ -149,8 +160,8 @@ type ListDashboardStatusCountsRow struct {
 	Count  int32
 }
 
-func (q *Queries) ListDashboardStatusCounts(ctx context.Context) ([]ListDashboardStatusCountsRow, error) {
-	rows, err := q.db.Query(ctx, listDashboardStatusCounts)
+func (q *Queries) ListDashboardStatusCounts(ctx context.Context, dollar_1 pgtype.UUID) ([]ListDashboardStatusCountsRow, error) {
+	rows, err := q.db.Query(ctx, listDashboardStatusCounts, dollar_1)
 	if err != nil {
 		return nil, err
 	}
@@ -175,19 +186,41 @@ SELECT o.id, o.customer_id, o.source, o.status, o.courier_id, o.location_id,
        o.updated_at, o.is_legacy
 FROM orders o
 WHERE o.status IN ('follow_up', 'hold', 'redirected', 'cancelled', 'returned')
+    AND o.company_id = $2::uuid
 ORDER BY o.created_at DESC
 LIMIT $1
 `
 
-func (q *Queries) ListProblemOrdersForAdmin(ctx context.Context, limit int32) ([]Order, error) {
-	rows, err := q.db.Query(ctx, listProblemOrdersForAdmin, limit)
+type ListProblemOrdersForAdminParams struct {
+	Limit   int32
+	Column2 pgtype.UUID
+}
+
+type ListProblemOrdersForAdminRow struct {
+	ID           pgtype.UUID
+	CustomerID   pgtype.UUID
+	Source       OrderSource
+	Status       OrderStatus
+	CourierID    pgtype.UUID
+	LocationID   pgtype.UUID
+	Address      string
+	CodAmount    pgtype.Numeric
+	IsStoreVisit bool
+	CreatedBy    pgtype.UUID
+	CreatedAt    pgtype.Timestamptz
+	UpdatedAt    pgtype.Timestamptz
+	IsLegacy     bool
+}
+
+func (q *Queries) ListProblemOrdersForAdmin(ctx context.Context, arg ListProblemOrdersForAdminParams) ([]ListProblemOrdersForAdminRow, error) {
+	rows, err := q.db.Query(ctx, listProblemOrdersForAdmin, arg.Limit, arg.Column2)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []Order
+	var items []ListProblemOrdersForAdminRow
 	for rows.Next() {
-		var i Order
+		var i ListProblemOrdersForAdminRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.CustomerID,
@@ -219,9 +252,15 @@ SELECT o.id, o.customer_id, o.source, o.status, o.courier_id, o.location_id,
        o.updated_at, o.is_legacy
 FROM orders o
 WHERE o.status IN ('follow_up', 'hold', 'redirected', 'cancelled', 'returned')
+    AND o.company_id = $2::uuid
 ORDER BY o.created_at DESC
 LIMIT $1
 `
+
+type ListProblemOrdersForStaffParams struct {
+	Limit   int32
+	Column2 pgtype.UUID
+}
 
 type ListProblemOrdersForStaffRow struct {
 	ID           pgtype.UUID
@@ -238,8 +277,8 @@ type ListProblemOrdersForStaffRow struct {
 	IsLegacy     bool
 }
 
-func (q *Queries) ListProblemOrdersForStaff(ctx context.Context, limit int32) ([]ListProblemOrdersForStaffRow, error) {
-	rows, err := q.db.Query(ctx, listProblemOrdersForStaff, limit)
+func (q *Queries) ListProblemOrdersForStaff(ctx context.Context, arg ListProblemOrdersForStaffParams) ([]ListProblemOrdersForStaffRow, error) {
+	rows, err := q.db.Query(ctx, listProblemOrdersForStaff, arg.Limit, arg.Column2)
 	if err != nil {
 		return nil, err
 	}

@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 
+	"oms-backend/internal/auth"
 	db "oms-backend/internal/db/generated"
 
 	"github.com/go-chi/chi/v5"
@@ -30,6 +31,11 @@ type createCustomerRequest struct {
 }
 
 func (h *Handler) CreateCustomer(w http.ResponseWriter, r *http.Request) {
+	companyID, ok := auth.GetCompanyID(r.Context())
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
 	var req createCustomerRequest
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -50,7 +56,7 @@ func (h *Handler) CreateCustomer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	existing, err := h.Queries.GetCustomerByPhone(r.Context(), req.Phone)
+	existing, err := h.Queries.GetCustomerByPhone(r.Context(), db.GetCustomerByPhoneParams{Phone: req.Phone, CompanyID: companyID})
 	if err == nil {
 		writeJSON(w, http.StatusOK, existing)
 		return
@@ -64,10 +70,11 @@ func (h *Handler) CreateCustomer(w http.ResponseWriter, r *http.Request) {
 	customer, err := h.Queries.CreateCustomer(
 		r.Context(),
 		db.CreateCustomerParams{
-			Phone:   req.Phone,
-			Phone2:  textToNullable(req.Phone2),
-			Name:    req.Name,
-			Address: textToNullable(req.Address),
+			Phone:     req.Phone,
+			Phone2:    textToNullable(req.Phone2),
+			Name:      req.Name,
+			Address:   textToNullable(req.Address),
+			CompanyID: companyID,
 		},
 	)
 	if err != nil {
@@ -79,6 +86,11 @@ func (h *Handler) CreateCustomer(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) SearchByPhone(w http.ResponseWriter, r *http.Request) {
+	companyID, ok := auth.GetCompanyID(r.Context())
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
 	phone := strings.TrimSpace(r.URL.Query().Get("phone"))
 
 	if phone == "" {
@@ -88,7 +100,7 @@ func (h *Handler) SearchByPhone(w http.ResponseWriter, r *http.Request) {
 
 	customer, err := h.Queries.GetCustomerByPhone(
 		r.Context(),
-		phone,
+		db.GetCustomerByPhoneParams{Phone: phone, CompanyID: companyID},
 	)
 	if err != nil {
 		if err == pgx.ErrNoRows {
@@ -104,6 +116,11 @@ func (h *Handler) SearchByPhone(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) GetCustomer(w http.ResponseWriter, r *http.Request) {
+	companyID, ok := auth.GetCompanyID(r.Context())
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
 	id := chi.URLParam(r, "id")
 
 	var customerID pgtype.UUID
@@ -115,7 +132,7 @@ func (h *Handler) GetCustomer(w http.ResponseWriter, r *http.Request) {
 
 	customer, err := h.Queries.GetCustomerByID(
 		r.Context(),
-		customerID,
+		db.GetCustomerByIDParams{ID: customerID, CompanyID: companyID},
 	)
 	if err != nil {
 		if err == pgx.ErrNoRows {
@@ -131,15 +148,16 @@ func (h *Handler) GetCustomer(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) ListCustomers(w http.ResponseWriter, r *http.Request) {
+	companyID, ok := auth.GetCompanyID(r.Context())
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
 	search := strings.TrimSpace(r.URL.Query().Get("search"))
 
 	customers, err := h.Queries.ListCustomers(
 		r.Context(),
-		db.ListCustomersParams{
-			Column1: search,
-			Limit:   50,
-			Offset:  0,
-		},
+		db.ListCustomersParams{CompanyID: companyID, Column2: search, Limit: 50, Offset: 0},
 	)
 	if err != nil {
 		http.Error(w, "failed to list customers", http.StatusInternalServerError)

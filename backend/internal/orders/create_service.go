@@ -23,6 +23,7 @@ type CreateOrderInput struct {
 	CodAmount    pgtype.Numeric
 	IsStoreVisit bool
 	CreatedBy    uuid.UUID
+	CompanyID    uuid.UUID
 	Items        []CreateOrderItem
 }
 
@@ -64,6 +65,7 @@ func (s *Service) CreateOrderWithItemsAndWarnings(
 		Bytes: input.CreatedBy,
 		Valid: true,
 	}
+	companyID := pgtype.UUID{Bytes: input.CompanyID, Valid: true}
 
 	var order db.Order
 	warnings := make([]StockWarning, 0)
@@ -78,6 +80,7 @@ func (s *Service) CreateOrderWithItemsAndWarnings(
 				Address:      input.Address,
 				IsStoreVisit: input.IsStoreVisit,
 				CreatedBy:    createdBy,
+				CompanyID:    companyID,
 			},
 		)
 		if err != nil {
@@ -98,7 +101,7 @@ func (s *Service) CreateOrderWithItemsAndWarnings(
 			UpdatedAt:    staffOrder.UpdatedAt,
 		}
 	} else {
-		order, err = queries.CreateOrderForAdmin(
+		adminOrder, err := queries.CreateOrderForAdmin(
 			ctx,
 			db.CreateOrderForAdminParams{
 				CustomerID:   customerID,
@@ -108,8 +111,12 @@ func (s *Service) CreateOrderWithItemsAndWarnings(
 				CodAmount:    input.CodAmount,
 				IsStoreVisit: input.IsStoreVisit,
 				CreatedBy:    createdBy,
+				CompanyID:    companyID,
 			},
 		)
+		if err == nil {
+			order = db.Order{ID: adminOrder.ID, CustomerID: adminOrder.CustomerID, Source: adminOrder.Source, Status: adminOrder.Status, CourierID: adminOrder.CourierID, LocationID: adminOrder.LocationID, Address: adminOrder.Address, CodAmount: adminOrder.CodAmount, IsStoreVisit: adminOrder.IsStoreVisit, CreatedBy: adminOrder.CreatedBy, CreatedAt: adminOrder.CreatedAt, UpdatedAt: adminOrder.UpdatedAt, IsLegacy: adminOrder.IsLegacy}
+		}
 		if err != nil {
 			return db.Order{}, nil, fmt.Errorf("CREATE ADMIN ORDER: %w", err)
 		}
@@ -122,6 +129,7 @@ func (s *Service) CreateOrderWithItemsAndWarnings(
 			FromStatus: db.NullOrderStatus{Valid: false},
 			ToStatus:   db.OrderStatusConfirmed,
 			ChangedBy:  createdBy,
+			CompanyID:  companyID,
 		},
 	); err != nil {
 		return db.Order{}, nil, fmt.Errorf("CREATE STATUS HISTORY: %w", err)
@@ -137,12 +145,12 @@ func (s *Service) CreateOrderWithItemsAndWarnings(
 			ctx,
 			db.DecreaseProductAvailableQtyParams{
 				ID:           productID,
-				AvailableQty: item.Quantity,
+				AvailableQty: item.Quantity, CompanyID: companyID,
 			},
 		)
 		if err != nil {
 			if err == pgx.ErrNoRows {
-				productDetails, fetchErr := queries.GetProductByID(ctx, productID)
+				productDetails, fetchErr := queries.GetProductByID(ctx, db.GetProductByIDParams{ID: productID, CompanyID: companyID})
 				if fetchErr != nil {
 					return db.Order{}, nil, fmt.Errorf("GET PRODUCT: %w", fetchErr)
 				}

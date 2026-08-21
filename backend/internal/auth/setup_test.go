@@ -12,6 +12,7 @@ import (
 	"oms-backend/internal/db/connection"
 	db "oms-backend/internal/db/generated"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/joho/godotenv"
 )
@@ -31,6 +32,13 @@ func TestSetupCreatesOnlyTheInitialSuperadmin(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer pool.Close()
+	var companiesTable bool
+	if err := pool.QueryRow(context.Background(), "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='companies')").Scan(&companiesTable); err != nil {
+		t.Fatal(err)
+	}
+	if !companiesTable {
+		t.Skip("tenant migration 000007 is not applied")
+	}
 
 	conn, err := pool.Acquire(context.Background())
 	if err != nil {
@@ -56,7 +64,7 @@ func TestSetupCreatesOnlyTheInitialSuperadmin(t *testing.T) {
 			return conn.Begin(ctx)
 		},
 	}
-	setupBody := `{"name":"First Owner","phone":" 9812345678 ","password":"OwnerPass123!","role":"admin"}`
+	setupBody := `{"company_name":"First Company ` + strings.ReplaceAll(uuid.NewString(), "-", "") + `","name":"First Owner","phone":" 9812345678 ","password":"OwnerPass123!","role":"admin"}`
 	setupRequest := httptest.NewRequest(http.MethodPost, "/api/auth/setup", strings.NewReader(setupBody))
 	setupRequest.Header.Set("Content-Type", "application/json")
 	setupRecording := httptest.NewRecorder()
@@ -97,12 +105,12 @@ func TestSetupCreatesOnlyTheInitialSuperadmin(t *testing.T) {
 		t.Fatalf("login after setup: expected 200, got %d: %s", loginRecording.Code, loginRecording.Body.String())
 	}
 
-	secondRequest := httptest.NewRequest(http.MethodPost, "/api/auth/setup", strings.NewReader(`{"name":"Second Owner","phone":"9823456789","password":"AnotherPass123!"}`))
+	secondRequest := httptest.NewRequest(http.MethodPost, "/api/auth/setup", strings.NewReader(`{"company_name":"Second Company `+strings.ReplaceAll(uuid.NewString(), "-", "")+`","name":"Second Owner","phone":"9823456789","password":"AnotherPass123!"}`))
 	secondRequest.Header.Set("Content-Type", "application/json")
 	secondRecording := httptest.NewRecorder()
 	handler.Setup(secondRecording, secondRequest)
-	if secondRecording.Code != http.StatusConflict {
-		t.Fatalf("second setup: expected 409, got %d: %s", secondRecording.Code, secondRecording.Body.String())
+	if secondRecording.Code != http.StatusOK {
+		t.Fatalf("second setup: expected 200, got %d: %s", secondRecording.Code, secondRecording.Body.String())
 	}
 
 	authenticatedRequest := httptest.NewRequest(http.MethodPost, "/api/auth/setup", strings.NewReader(setupBody))

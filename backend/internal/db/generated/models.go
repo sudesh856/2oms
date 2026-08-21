@@ -150,10 +150,18 @@ func (ns NullUserRole) Value() (driver.Value, error) {
 	return string(ns.UserRole), nil
 }
 
+type Company struct {
+	ID        pgtype.UUID
+	Name      string
+	CreatedAt pgtype.Timestamptz
+	UpdatedAt pgtype.Timestamptz
+}
+
 type Courier struct {
 	ID        pgtype.UUID
 	Name      string
 	CreatedAt pgtype.Timestamptz
+	CompanyID pgtype.UUID
 }
 
 type CourierLocation struct {
@@ -162,6 +170,7 @@ type CourierLocation struct {
 	LocationName   string
 	DeliveryCharge pgtype.Numeric
 	CreatedAt      pgtype.Timestamptz
+	CompanyID      pgtype.UUID
 }
 
 type Customer struct {
@@ -171,6 +180,7 @@ type Customer struct {
 	Name      string
 	Address   pgtype.Text
 	CreatedAt pgtype.Timestamptz
+	CompanyID pgtype.UUID
 }
 
 type FollowUp struct {
@@ -183,6 +193,7 @@ type FollowUp struct {
 	Note           pgtype.Text
 	CreatedAt      pgtype.Timestamptz
 	AssignedTo     pgtype.UUID
+	CompanyID      pgtype.UUID
 }
 
 type Order struct {
@@ -199,6 +210,7 @@ type Order struct {
 	CreatedAt    pgtype.Timestamptz
 	UpdatedAt    pgtype.Timestamptz
 	IsLegacy     bool
+	CompanyID    pgtype.UUID
 }
 
 type OrderItem struct {
@@ -207,6 +219,7 @@ type OrderItem struct {
 	ProductID pgtype.UUID
 	Quantity  int32
 	Price     pgtype.Numeric
+	CompanyID pgtype.UUID
 }
 
 type Product struct {
@@ -216,6 +229,7 @@ type Product struct {
 	AvailableQty int32
 	CreatedAt    pgtype.Timestamptz
 	WarehouseQty int32
+	CompanyID    pgtype.UUID
 }
 
 type StatusHistory struct {
@@ -225,6 +239,7 @@ type StatusHistory struct {
 	ToStatus   OrderStatus
 	ChangedBy  pgtype.UUID
 	ChangedAt  pgtype.Timestamptz
+	CompanyID  pgtype.UUID
 }
 
 type User struct {
@@ -237,4 +252,5 @@ type User struct {
 	IsActive            bool
 	InvitationTokenHash pgtype.Text
 	InvitationExpiresAt pgtype.Timestamptz
+	CompanyID           pgtype.UUID
 }

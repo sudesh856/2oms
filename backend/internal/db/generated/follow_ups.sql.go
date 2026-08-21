@@ -19,7 +19,8 @@ INSERT INTO follow_ups (
     preferred_day,
     next_action_date,
     note,
-    assigned_to
+    assigned_to,
+    company_id
 )
 VALUES (
     $1,
@@ -28,7 +29,8 @@ VALUES (
     $4,
     $5,
     $6,
-    $7
+    $7,
+    $8
 )
 RETURNING
     id,
@@ -50,6 +52,7 @@ type CreateFollowUpParams struct {
 	NextActionDate pgtype.Date
 	Note           pgtype.Text
 	AssignedTo     pgtype.UUID
+	CompanyID      pgtype.UUID
 }
 
 type CreateFollowUpRow struct {
@@ -73,6 +76,7 @@ func (q *Queries) CreateFollowUp(ctx context.Context, arg CreateFollowUpParams) 
 		arg.NextActionDate,
 		arg.Note,
 		arg.AssignedTo,
+		arg.CompanyID,
 	)
 	var i CreateFollowUpRow
 	err := row.Scan(
@@ -91,22 +95,32 @@ func (q *Queries) CreateFollowUp(ctx context.Context, arg CreateFollowUpParams) 
 
 const deleteFollowUp = `-- name: DeleteFollowUp :exec
 DELETE FROM follow_ups
-WHERE id = $1
+WHERE id = $1 AND company_id = $2
 `
 
-func (q *Queries) DeleteFollowUp(ctx context.Context, id pgtype.UUID) error {
-	_, err := q.db.Exec(ctx, deleteFollowUp, id)
+type DeleteFollowUpParams struct {
+	ID        pgtype.UUID
+	CompanyID pgtype.UUID
+}
+
+func (q *Queries) DeleteFollowUp(ctx context.Context, arg DeleteFollowUpParams) error {
+	_, err := q.db.Exec(ctx, deleteFollowUp, arg.ID, arg.CompanyID)
 	return err
 }
 
 const getLatestFollowUpAttempt = `-- name: GetLatestFollowUpAttempt :one
 SELECT COALESCE(MAX(attempt_no), 0)::int
 FROM follow_ups
-WHERE order_id = $1
+WHERE order_id = $1 AND company_id = $2
 `
 
-func (q *Queries) GetLatestFollowUpAttempt(ctx context.Context, orderID pgtype.UUID) (int32, error) {
-	row := q.db.QueryRow(ctx, getLatestFollowUpAttempt, orderID)
+type GetLatestFollowUpAttemptParams struct {
+	OrderID   pgtype.UUID
+	CompanyID pgtype.UUID
+}
+
+func (q *Queries) GetLatestFollowUpAttempt(ctx context.Context, arg GetLatestFollowUpAttemptParams) (int32, error) {
+	row := q.db.QueryRow(ctx, getLatestFollowUpAttempt, arg.OrderID, arg.CompanyID)
 	var column_1 int32
 	err := row.Scan(&column_1)
 	return column_1, err
@@ -141,12 +155,14 @@ AND (
     $2::boolean = FALSE
     OR f.next_action = 'no_answer'
 )
+AND f.company_id = $3::uuid
 ORDER BY f.next_action_date NULLS LAST, f.created_at ASC
 `
 
 type ListFollowUpsParams struct {
 	Column1 pgtype.Date
 	Column2 bool
+	Column3 pgtype.UUID
 }
 
 type ListFollowUpsRow struct {
@@ -168,7 +184,7 @@ type ListFollowUpsRow struct {
 }
 
 func (q *Queries) ListFollowUps(ctx context.Context, arg ListFollowUpsParams) ([]ListFollowUpsRow, error) {
-	rows, err := q.db.Query(ctx, listFollowUps, arg.Column1, arg.Column2)
+	rows, err := q.db.Query(ctx, listFollowUps, arg.Column1, arg.Column2, arg.Column3)
 	if err != nil {
 		return nil, err
 	}

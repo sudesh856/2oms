@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/joho/godotenv"
 
 	"oms-backend/internal/auth"
@@ -43,6 +44,10 @@ func main() {
 	}
 
 	queries := db.New(pool)
+	var companyID pgtype.UUID
+	if err := pool.QueryRow(context.Background(), "SELECT id FROM companies ORDER BY created_at ASC LIMIT 1").Scan(&companyID); err != nil {
+		log.Fatal("no company exists; run migrations first")
+	}
 
 	user, err := queries.CreateUser(
 		context.Background(),
@@ -51,6 +56,7 @@ func main() {
 			Phone:        phone,
 			PasswordHash: hash,
 			Role:         db.UserRoleSuperadmin,
+			CompanyID:    companyID,
 		},
 	)
 	if err != nil {

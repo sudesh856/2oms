@@ -13,8 +13,8 @@ import (
 
 const createLegacyOrder = `-- name: CreateLegacyOrder :one
 INSERT INTO orders (customer_id, source, status, address, cod_amount, is_store_visit,
-                    created_by, created_at, is_legacy)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, TRUE)
+                    created_by, created_at, is_legacy, company_id)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, TRUE, $9)
 RETURNING id, customer_id, source, status, courier_id, location_id, address,
           cod_amount, is_store_visit, created_by, created_at, updated_at, is_legacy
 `
@@ -28,9 +28,26 @@ type CreateLegacyOrderParams struct {
 	IsStoreVisit bool
 	CreatedBy    pgtype.UUID
 	CreatedAt    pgtype.Timestamptz
+	CompanyID    pgtype.UUID
 }
 
-func (q *Queries) CreateLegacyOrder(ctx context.Context, arg CreateLegacyOrderParams) (Order, error) {
+type CreateLegacyOrderRow struct {
+	ID           pgtype.UUID
+	CustomerID   pgtype.UUID
+	Source       OrderSource
+	Status       OrderStatus
+	CourierID    pgtype.UUID
+	LocationID   pgtype.UUID
+	Address      string
+	CodAmount    pgtype.Numeric
+	IsStoreVisit bool
+	CreatedBy    pgtype.UUID
+	CreatedAt    pgtype.Timestamptz
+	UpdatedAt    pgtype.Timestamptz
+	IsLegacy     bool
+}
+
+func (q *Queries) CreateLegacyOrder(ctx context.Context, arg CreateLegacyOrderParams) (CreateLegacyOrderRow, error) {
 	row := q.db.QueryRow(ctx, createLegacyOrder,
 		arg.CustomerID,
 		arg.Source,
@@ -40,8 +57,9 @@ func (q *Queries) CreateLegacyOrder(ctx context.Context, arg CreateLegacyOrderPa
 		arg.IsStoreVisit,
 		arg.CreatedBy,
 		arg.CreatedAt,
+		arg.CompanyID,
 	)
-	var i Order
+	var i CreateLegacyOrderRow
 	err := row.Scan(
 		&i.ID,
 		&i.CustomerID,
@@ -61,8 +79,8 @@ func (q *Queries) CreateLegacyOrder(ctx context.Context, arg CreateLegacyOrderPa
 }
 
 const createOrderForAdmin = `-- name: CreateOrderForAdmin :one
-INSERT INTO orders (customer_id, source, status, address, cod_amount, is_store_visit, created_by)
-VALUES ($1, $2, $3, $4, $5, $6, $7)
+INSERT INTO orders (customer_id, source, status, address, cod_amount, is_store_visit, created_by, company_id)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 RETURNING id, customer_id, source, status, courier_id, location_id, address,
           cod_amount, is_store_visit, created_by, created_at, updated_at, is_legacy
 `
@@ -75,9 +93,26 @@ type CreateOrderForAdminParams struct {
 	CodAmount    pgtype.Numeric
 	IsStoreVisit bool
 	CreatedBy    pgtype.UUID
+	CompanyID    pgtype.UUID
 }
 
-func (q *Queries) CreateOrderForAdmin(ctx context.Context, arg CreateOrderForAdminParams) (Order, error) {
+type CreateOrderForAdminRow struct {
+	ID           pgtype.UUID
+	CustomerID   pgtype.UUID
+	Source       OrderSource
+	Status       OrderStatus
+	CourierID    pgtype.UUID
+	LocationID   pgtype.UUID
+	Address      string
+	CodAmount    pgtype.Numeric
+	IsStoreVisit bool
+	CreatedBy    pgtype.UUID
+	CreatedAt    pgtype.Timestamptz
+	UpdatedAt    pgtype.Timestamptz
+	IsLegacy     bool
+}
+
+func (q *Queries) CreateOrderForAdmin(ctx context.Context, arg CreateOrderForAdminParams) (CreateOrderForAdminRow, error) {
 	row := q.db.QueryRow(ctx, createOrderForAdmin,
 		arg.CustomerID,
 		arg.Source,
@@ -86,8 +121,9 @@ func (q *Queries) CreateOrderForAdmin(ctx context.Context, arg CreateOrderForAdm
 		arg.CodAmount,
 		arg.IsStoreVisit,
 		arg.CreatedBy,
+		arg.CompanyID,
 	)
-	var i Order
+	var i CreateOrderForAdminRow
 	err := row.Scan(
 		&i.ID,
 		&i.CustomerID,
@@ -107,8 +143,8 @@ func (q *Queries) CreateOrderForAdmin(ctx context.Context, arg CreateOrderForAdm
 }
 
 const createOrderForStaff = `-- name: CreateOrderForStaff :one
-INSERT INTO orders (customer_id, source, status, address, is_store_visit, created_by)
-VALUES ($1, $2, $3, $4, $5, $6)
+INSERT INTO orders (customer_id, source, status, address, is_store_visit, created_by, company_id)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
 RETURNING id, customer_id, source, status, courier_id, location_id, address,
           is_store_visit, created_by, created_at, updated_at, is_legacy
 `
@@ -120,6 +156,7 @@ type CreateOrderForStaffParams struct {
 	Address      string
 	IsStoreVisit bool
 	CreatedBy    pgtype.UUID
+	CompanyID    pgtype.UUID
 }
 
 type CreateOrderForStaffRow struct {
@@ -145,6 +182,7 @@ func (q *Queries) CreateOrderForStaff(ctx context.Context, arg CreateOrderForSta
 		arg.Address,
 		arg.IsStoreVisit,
 		arg.CreatedBy,
+		arg.CompanyID,
 	)
 	var i CreateOrderForStaffRow
 	err := row.Scan(
@@ -165,8 +203,8 @@ func (q *Queries) CreateOrderForStaff(ctx context.Context, arg CreateOrderForSta
 }
 
 const createStatusHistory = `-- name: CreateStatusHistory :one
-INSERT INTO status_history (order_id, from_status, to_status, changed_by)
-VALUES ($1, $2, $3, $4)
+INSERT INTO status_history (order_id, from_status, to_status, changed_by, company_id)
+VALUES ($1, $2, $3, $4, $5)
 RETURNING id, order_id, from_status, to_status, changed_by, changed_at
 `
 
@@ -175,16 +213,27 @@ type CreateStatusHistoryParams struct {
 	FromStatus NullOrderStatus
 	ToStatus   OrderStatus
 	ChangedBy  pgtype.UUID
+	CompanyID  pgtype.UUID
 }
 
-func (q *Queries) CreateStatusHistory(ctx context.Context, arg CreateStatusHistoryParams) (StatusHistory, error) {
+type CreateStatusHistoryRow struct {
+	ID         pgtype.UUID
+	OrderID    pgtype.UUID
+	FromStatus NullOrderStatus
+	ToStatus   OrderStatus
+	ChangedBy  pgtype.UUID
+	ChangedAt  pgtype.Timestamptz
+}
+
+func (q *Queries) CreateStatusHistory(ctx context.Context, arg CreateStatusHistoryParams) (CreateStatusHistoryRow, error) {
 	row := q.db.QueryRow(ctx, createStatusHistory,
 		arg.OrderID,
 		arg.FromStatus,
 		arg.ToStatus,
 		arg.ChangedBy,
+		arg.CompanyID,
 	)
-	var i StatusHistory
+	var i CreateStatusHistoryRow
 	err := row.Scan(
 		&i.ID,
 		&i.OrderID,
@@ -200,12 +249,33 @@ const getOrderForAdmin = `-- name: GetOrderForAdmin :one
 SELECT o.id, o.customer_id, o.source, o.status, o.courier_id, o.location_id,
        o.address, o.cod_amount, o.is_store_visit, o.created_by, o.created_at,
        o.updated_at, o.is_legacy
-FROM orders o WHERE o.id = $1
+FROM orders o WHERE o.id = $1 AND o.company_id = $2
 `
 
-func (q *Queries) GetOrderForAdmin(ctx context.Context, id pgtype.UUID) (Order, error) {
-	row := q.db.QueryRow(ctx, getOrderForAdmin, id)
-	var i Order
+type GetOrderForAdminParams struct {
+	ID        pgtype.UUID
+	CompanyID pgtype.UUID
+}
+
+type GetOrderForAdminRow struct {
+	ID           pgtype.UUID
+	CustomerID   pgtype.UUID
+	Source       OrderSource
+	Status       OrderStatus
+	CourierID    pgtype.UUID
+	LocationID   pgtype.UUID
+	Address      string
+	CodAmount    pgtype.Numeric
+	IsStoreVisit bool
+	CreatedBy    pgtype.UUID
+	CreatedAt    pgtype.Timestamptz
+	UpdatedAt    pgtype.Timestamptz
+	IsLegacy     bool
+}
+
+func (q *Queries) GetOrderForAdmin(ctx context.Context, arg GetOrderForAdminParams) (GetOrderForAdminRow, error) {
+	row := q.db.QueryRow(ctx, getOrderForAdmin, arg.ID, arg.CompanyID)
+	var i GetOrderForAdminRow
 	err := row.Scan(
 		&i.ID,
 		&i.CustomerID,
@@ -228,8 +298,13 @@ const getOrderForStaff = `-- name: GetOrderForStaff :one
 SELECT o.id, o.customer_id, o.source, o.status, o.courier_id, o.location_id,
        o.address, o.is_store_visit, o.created_by, o.created_at,
        o.updated_at, o.is_legacy
-FROM orders o WHERE o.id = $1
+FROM orders o WHERE o.id = $1 AND o.company_id = $2
 `
+
+type GetOrderForStaffParams struct {
+	ID        pgtype.UUID
+	CompanyID pgtype.UUID
+}
 
 type GetOrderForStaffRow struct {
 	ID           pgtype.UUID
@@ -246,8 +321,8 @@ type GetOrderForStaffRow struct {
 	IsLegacy     bool
 }
 
-func (q *Queries) GetOrderForStaff(ctx context.Context, id pgtype.UUID) (GetOrderForStaffRow, error) {
-	row := q.db.QueryRow(ctx, getOrderForStaff, id)
+func (q *Queries) GetOrderForStaff(ctx context.Context, arg GetOrderForStaffParams) (GetOrderForStaffRow, error) {
+	row := q.db.QueryRow(ctx, getOrderForStaff, arg.ID, arg.CompanyID)
 	var i GetOrderForStaffRow
 	err := row.Scan(
 		&i.ID,
@@ -270,18 +345,39 @@ const listCustomerOrdersForAdmin = `-- name: ListCustomerOrdersForAdmin :many
 SELECT o.id, o.customer_id, o.source, o.status, o.courier_id, o.location_id,
        o.address, o.cod_amount, o.is_store_visit, o.created_by, o.created_at,
        o.updated_at, o.is_legacy
-FROM orders o WHERE o.customer_id = $1 ORDER BY o.created_at DESC
+FROM orders o WHERE o.customer_id = $1 AND o.company_id = $2 ORDER BY o.created_at DESC
 `
 
-func (q *Queries) ListCustomerOrdersForAdmin(ctx context.Context, customerID pgtype.UUID) ([]Order, error) {
-	rows, err := q.db.Query(ctx, listCustomerOrdersForAdmin, customerID)
+type ListCustomerOrdersForAdminParams struct {
+	CustomerID pgtype.UUID
+	CompanyID  pgtype.UUID
+}
+
+type ListCustomerOrdersForAdminRow struct {
+	ID           pgtype.UUID
+	CustomerID   pgtype.UUID
+	Source       OrderSource
+	Status       OrderStatus
+	CourierID    pgtype.UUID
+	LocationID   pgtype.UUID
+	Address      string
+	CodAmount    pgtype.Numeric
+	IsStoreVisit bool
+	CreatedBy    pgtype.UUID
+	CreatedAt    pgtype.Timestamptz
+	UpdatedAt    pgtype.Timestamptz
+	IsLegacy     bool
+}
+
+func (q *Queries) ListCustomerOrdersForAdmin(ctx context.Context, arg ListCustomerOrdersForAdminParams) ([]ListCustomerOrdersForAdminRow, error) {
+	rows, err := q.db.Query(ctx, listCustomerOrdersForAdmin, arg.CustomerID, arg.CompanyID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []Order
+	var items []ListCustomerOrdersForAdminRow
 	for rows.Next() {
-		var i Order
+		var i ListCustomerOrdersForAdminRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.CustomerID,
@@ -311,8 +407,13 @@ const listCustomerOrdersForStaff = `-- name: ListCustomerOrdersForStaff :many
 SELECT o.id, o.customer_id, o.source, o.status, o.courier_id, o.location_id,
        o.address, o.is_store_visit, o.created_by, o.created_at,
        o.updated_at, o.is_legacy
-FROM orders o WHERE o.customer_id = $1 ORDER BY o.created_at DESC
+FROM orders o WHERE o.customer_id = $1 AND o.company_id = $2 ORDER BY o.created_at DESC
 `
+
+type ListCustomerOrdersForStaffParams struct {
+	CustomerID pgtype.UUID
+	CompanyID  pgtype.UUID
+}
 
 type ListCustomerOrdersForStaffRow struct {
 	ID           pgtype.UUID
@@ -329,8 +430,8 @@ type ListCustomerOrdersForStaffRow struct {
 	IsLegacy     bool
 }
 
-func (q *Queries) ListCustomerOrdersForStaff(ctx context.Context, customerID pgtype.UUID) ([]ListCustomerOrdersForStaffRow, error) {
-	rows, err := q.db.Query(ctx, listCustomerOrdersForStaff, customerID)
+func (q *Queries) ListCustomerOrdersForStaff(ctx context.Context, arg ListCustomerOrdersForStaffParams) ([]ListCustomerOrdersForStaffRow, error) {
+	rows, err := q.db.Query(ctx, listCustomerOrdersForStaff, arg.CustomerID, arg.CompanyID)
 	if err != nil {
 		return nil, err
 	}
@@ -375,23 +476,41 @@ WHERE ($1::text = '' OR o.id::text ILIKE '%' || $1::text || '%' OR c.name ILIKE 
   AND ($5::uuid IS NULL OR o.courier_id = $5::uuid)
   AND ($6::text = '' OR o.source::text = $6::text)
   AND ($7::uuid IS NULL OR o.customer_id = $7::uuid)
+  AND o.company_id = $10::uuid
 ORDER BY o.created_at DESC
 LIMIT $9 OFFSET $8
 `
 
 type ListOrdersForAdminParams struct {
-	Column1 string
-	Column2 string
-	Column3 pgtype.Timestamptz
-	Column4 pgtype.Timestamptz
-	Column5 pgtype.UUID
-	Column6 string
-	Column7 pgtype.UUID
-	Offset  int32
-	Limit   int32
+	Column1  string
+	Column2  string
+	Column3  pgtype.Timestamptz
+	Column4  pgtype.Timestamptz
+	Column5  pgtype.UUID
+	Column6  string
+	Column7  pgtype.UUID
+	Offset   int32
+	Limit    int32
+	Column10 pgtype.UUID
 }
 
-func (q *Queries) ListOrdersForAdmin(ctx context.Context, arg ListOrdersForAdminParams) ([]Order, error) {
+type ListOrdersForAdminRow struct {
+	ID           pgtype.UUID
+	CustomerID   pgtype.UUID
+	Source       OrderSource
+	Status       OrderStatus
+	CourierID    pgtype.UUID
+	LocationID   pgtype.UUID
+	Address      string
+	CodAmount    pgtype.Numeric
+	IsStoreVisit bool
+	CreatedBy    pgtype.UUID
+	CreatedAt    pgtype.Timestamptz
+	UpdatedAt    pgtype.Timestamptz
+	IsLegacy     bool
+}
+
+func (q *Queries) ListOrdersForAdmin(ctx context.Context, arg ListOrdersForAdminParams) ([]ListOrdersForAdminRow, error) {
 	rows, err := q.db.Query(ctx, listOrdersForAdmin,
 		arg.Column1,
 		arg.Column2,
@@ -402,14 +521,15 @@ func (q *Queries) ListOrdersForAdmin(ctx context.Context, arg ListOrdersForAdmin
 		arg.Column7,
 		arg.Offset,
 		arg.Limit,
+		arg.Column10,
 	)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []Order
+	var items []ListOrdersForAdminRow
 	for rows.Next() {
-		var i Order
+		var i ListOrdersForAdminRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.CustomerID,
@@ -448,20 +568,22 @@ WHERE ($1::text = '' OR o.id::text ILIKE '%' || $1::text || '%' OR c.name ILIKE 
   AND ($5::uuid IS NULL OR o.courier_id = $5::uuid)
   AND ($6::text = '' OR o.source::text = $6::text)
   AND ($7::uuid IS NULL OR o.customer_id = $7::uuid)
+  AND o.company_id = $10::uuid
 ORDER BY o.created_at DESC
 LIMIT $9 OFFSET $8
 `
 
 type ListOrdersForStaffParams struct {
-	Column1 string
-	Column2 string
-	Column3 pgtype.Timestamptz
-	Column4 pgtype.Timestamptz
-	Column5 pgtype.UUID
-	Column6 string
-	Column7 pgtype.UUID
-	Offset  int32
-	Limit   int32
+	Column1  string
+	Column2  string
+	Column3  pgtype.Timestamptz
+	Column4  pgtype.Timestamptz
+	Column5  pgtype.UUID
+	Column6  string
+	Column7  pgtype.UUID
+	Offset   int32
+	Limit    int32
+	Column10 pgtype.UUID
 }
 
 type ListOrdersForStaffRow struct {
@@ -490,6 +612,7 @@ func (q *Queries) ListOrdersForStaff(ctx context.Context, arg ListOrdersForStaff
 		arg.Column7,
 		arg.Offset,
 		arg.Limit,
+		arg.Column10,
 	)
 	if err != nil {
 		return nil, err
@@ -524,20 +647,42 @@ func (q *Queries) ListOrdersForStaff(ctx context.Context, arg ListOrdersForStaff
 
 const updateOrderStatus = `-- name: UpdateOrderStatus :one
 UPDATE orders SET status = $2, updated_at = NOW()
-WHERE id = $1 AND status = $3
+WHERE id = $1 AND status = $3 AND company_id = $4
 RETURNING id, customer_id, source, status, courier_id, location_id, address,
           cod_amount, is_store_visit, created_by, created_at, updated_at, is_legacy
 `
 
 type UpdateOrderStatusParams struct {
-	ID       pgtype.UUID
-	Status   OrderStatus
-	Status_2 OrderStatus
+	ID        pgtype.UUID
+	Status    OrderStatus
+	Status_2  OrderStatus
+	CompanyID pgtype.UUID
 }
 
-func (q *Queries) UpdateOrderStatus(ctx context.Context, arg UpdateOrderStatusParams) (Order, error) {
-	row := q.db.QueryRow(ctx, updateOrderStatus, arg.ID, arg.Status, arg.Status_2)
-	var i Order
+type UpdateOrderStatusRow struct {
+	ID           pgtype.UUID
+	CustomerID   pgtype.UUID
+	Source       OrderSource
+	Status       OrderStatus
+	CourierID    pgtype.UUID
+	LocationID   pgtype.UUID
+	Address      string
+	CodAmount    pgtype.Numeric
+	IsStoreVisit bool
+	CreatedBy    pgtype.UUID
+	CreatedAt    pgtype.Timestamptz
+	UpdatedAt    pgtype.Timestamptz
+	IsLegacy     bool
+}
+
+func (q *Queries) UpdateOrderStatus(ctx context.Context, arg UpdateOrderStatusParams) (UpdateOrderStatusRow, error) {
+	row := q.db.QueryRow(ctx, updateOrderStatus,
+		arg.ID,
+		arg.Status,
+		arg.Status_2,
+		arg.CompanyID,
+	)
+	var i UpdateOrderStatusRow
 	err := row.Scan(
 		&i.ID,
 		&i.CustomerID,

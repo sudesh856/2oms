@@ -16,22 +16,25 @@ INSERT INTO customers (
     phone,
     phone2,
     name,
-    address
+    address,
+    company_id
 )
 VALUES (
     $1,
     $2,
     $3,
-    $4
+    $4,
+    $5
 )
-RETURNING id, phone, phone2, name, address, created_at
+RETURNING id, phone, phone2, name, address, created_at, company_id
 `
 
 type CreateCustomerParams struct {
-	Phone   string
-	Phone2  pgtype.Text
-	Name    string
-	Address pgtype.Text
+	Phone     string
+	Phone2    pgtype.Text
+	Name      string
+	Address   pgtype.Text
+	CompanyID pgtype.UUID
 }
 
 func (q *Queries) CreateCustomer(ctx context.Context, arg CreateCustomerParams) (Customer, error) {
@@ -40,6 +43,7 @@ func (q *Queries) CreateCustomer(ctx context.Context, arg CreateCustomerParams) 
 		arg.Phone2,
 		arg.Name,
 		arg.Address,
+		arg.CompanyID,
 	)
 	var i Customer
 	err := row.Scan(
@@ -49,19 +53,25 @@ func (q *Queries) CreateCustomer(ctx context.Context, arg CreateCustomerParams) 
 		&i.Name,
 		&i.Address,
 		&i.CreatedAt,
+		&i.CompanyID,
 	)
 	return i, err
 }
 
 const getCustomerByID = `-- name: GetCustomerByID :one
-SELECT id, phone, phone2, name, address, created_at
+SELECT id, phone, phone2, name, address, created_at, company_id
 FROM customers
-WHERE id = $1
+WHERE id = $1 AND company_id = $2
 LIMIT 1
 `
 
-func (q *Queries) GetCustomerByID(ctx context.Context, id pgtype.UUID) (Customer, error) {
-	row := q.db.QueryRow(ctx, getCustomerByID, id)
+type GetCustomerByIDParams struct {
+	ID        pgtype.UUID
+	CompanyID pgtype.UUID
+}
+
+func (q *Queries) GetCustomerByID(ctx context.Context, arg GetCustomerByIDParams) (Customer, error) {
+	row := q.db.QueryRow(ctx, getCustomerByID, arg.ID, arg.CompanyID)
 	var i Customer
 	err := row.Scan(
 		&i.ID,
@@ -70,19 +80,25 @@ func (q *Queries) GetCustomerByID(ctx context.Context, id pgtype.UUID) (Customer
 		&i.Name,
 		&i.Address,
 		&i.CreatedAt,
+		&i.CompanyID,
 	)
 	return i, err
 }
 
 const getCustomerByPhone = `-- name: GetCustomerByPhone :one
-SELECT id, phone, phone2, name, address, created_at
+SELECT id, phone, phone2, name, address, created_at, company_id
 FROM customers
-WHERE phone = $1
+WHERE phone = $1 AND company_id = $2
 LIMIT 1
 `
 
-func (q *Queries) GetCustomerByPhone(ctx context.Context, phone string) (Customer, error) {
-	row := q.db.QueryRow(ctx, getCustomerByPhone, phone)
+type GetCustomerByPhoneParams struct {
+	Phone     string
+	CompanyID pgtype.UUID
+}
+
+func (q *Queries) GetCustomerByPhone(ctx context.Context, arg GetCustomerByPhoneParams) (Customer, error) {
+	row := q.db.QueryRow(ctx, getCustomerByPhone, arg.Phone, arg.CompanyID)
 	var i Customer
 	err := row.Scan(
 		&i.ID,
@@ -91,29 +107,37 @@ func (q *Queries) GetCustomerByPhone(ctx context.Context, phone string) (Custome
 		&i.Name,
 		&i.Address,
 		&i.CreatedAt,
+		&i.CompanyID,
 	)
 	return i, err
 }
 
 const listCustomers = `-- name: ListCustomers :many
-SELECT id, phone, phone2, name, address, created_at
+SELECT id, phone, phone2, name, address, created_at, company_id
 FROM customers
-WHERE $1 = ''
-   OR phone ILIKE '%' || $1 || '%'
-   OR name ILIKE '%' || $1 || '%'
+WHERE company_id = $1
+  AND ($2 = ''
+    OR phone ILIKE '%' || $2 || '%'
+    OR name ILIKE '%' || $2 || '%')
 ORDER BY created_at DESC
-LIMIT $2
-OFFSET $3
+LIMIT $3
+OFFSET $4
 `
 
 type ListCustomersParams struct {
-	Column1 interface{}
-	Limit   int32
-	Offset  int32
+	CompanyID pgtype.UUID
+	Column2   interface{}
+	Limit     int32
+	Offset    int32
 }
 
 func (q *Queries) ListCustomers(ctx context.Context, arg ListCustomersParams) ([]Customer, error) {
-	rows, err := q.db.Query(ctx, listCustomers, arg.Column1, arg.Limit, arg.Offset)
+	rows, err := q.db.Query(ctx, listCustomers,
+		arg.CompanyID,
+		arg.Column2,
+		arg.Limit,
+		arg.Offset,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -128,6 +152,7 @@ func (q *Queries) ListCustomers(ctx context.Context, arg ListCustomersParams) ([
 			&i.Name,
 			&i.Address,
 			&i.CreatedAt,
+			&i.CompanyID,
 		); err != nil {
 			return nil, err
 		}
@@ -146,16 +171,17 @@ SET
     phone2 = $3,
     name = $4,
     address = $5
-WHERE id = $1
-RETURNING id, phone, phone2, name, address, created_at
+WHERE id = $1 AND company_id = $6
+RETURNING id, phone, phone2, name, address, created_at, company_id
 `
 
 type UpdateCustomerParams struct {
-	ID      pgtype.UUID
-	Phone   string
-	Phone2  pgtype.Text
-	Name    string
-	Address pgtype.Text
+	ID        pgtype.UUID
+	Phone     string
+	Phone2    pgtype.Text
+	Name      string
+	Address   pgtype.Text
+	CompanyID pgtype.UUID
 }
 
 func (q *Queries) UpdateCustomer(ctx context.Context, arg UpdateCustomerParams) (Customer, error) {
@@ -165,6 +191,7 @@ func (q *Queries) UpdateCustomer(ctx context.Context, arg UpdateCustomerParams) 
 		arg.Phone2,
 		arg.Name,
 		arg.Address,
+		arg.CompanyID,
 	)
 	var i Customer
 	err := row.Scan(
@@ -174,6 +201,7 @@ func (q *Queries) UpdateCustomer(ctx context.Context, arg UpdateCustomerParams) 
 		&i.Name,
 		&i.Address,
 		&i.CreatedAt,
+		&i.CompanyID,
 	)
 	return i, err
 }

@@ -31,25 +31,30 @@ type dashboardResponse struct {
 }
 
 func (h *Handler) Summary(w http.ResponseWriter, r *http.Request) {
+	companyID, ok := auth.GetCompanyID(r.Context())
+	if !ok {
+		api.WriteError(w, http.StatusUnauthorized, "UNAUTHORIZED", "unauthorized")
+		return
+	}
 	now := time.Now().UTC()
 	start := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
 	end := start.Add(24 * time.Hour)
-	counts, err := h.Queries.GetDashboardCounts(r.Context(), db.GetDashboardCountsParams{Column1: pgtype.Timestamptz{Time: start, Valid: true}, Column2: pgtype.Timestamptz{Time: end, Valid: true}})
+	counts, err := h.Queries.GetDashboardCounts(r.Context(), db.GetDashboardCountsParams{Column1: pgtype.Timestamptz{Time: start, Valid: true}, Column2: pgtype.Timestamptz{Time: end, Valid: true}, Column3: companyID})
 	if err != nil {
 		api.WriteError(w, http.StatusInternalServerError, "DASHBOARD_FETCH_FAILED", "failed to load dashboard summary")
 		return
 	}
-	statusCounts, err := h.Queries.ListDashboardStatusCounts(r.Context())
+	statusCounts, err := h.Queries.ListDashboardStatusCounts(r.Context(), companyID)
 	if err != nil {
 		api.WriteError(w, http.StatusInternalServerError, "DASHBOARD_FETCH_FAILED", "failed to load status counts")
 		return
 	}
-	courierCounts, err := h.Queries.ListDashboardCourierCounts(r.Context(), db.ListDashboardCourierCountsParams{Column1: pgtype.Timestamptz{Time: start, Valid: true}, Column2: pgtype.Timestamptz{Time: end, Valid: true}})
+	courierCounts, err := h.Queries.ListDashboardCourierCounts(r.Context(), db.ListDashboardCourierCountsParams{Column1: pgtype.Timestamptz{Time: start, Valid: true}, Column2: pgtype.Timestamptz{Time: end, Valid: true}, Column3: companyID})
 	if err != nil {
 		api.WriteError(w, http.StatusInternalServerError, "DASHBOARD_FETCH_FAILED", "failed to load courier counts")
 		return
 	}
-	followUps, err := h.Queries.ListDashboardFollowUpsDue(r.Context(), pgtype.Date{Time: start, Valid: true})
+	followUps, err := h.Queries.ListDashboardFollowUpsDue(r.Context(), db.ListDashboardFollowUpsDueParams{Column1: pgtype.Date{Time: start, Valid: true}, Column2: companyID})
 	if err != nil {
 		api.WriteError(w, http.StatusInternalServerError, "DASHBOARD_FETCH_FAILED", "failed to load due follow-ups")
 		return
@@ -67,6 +72,11 @@ func (h *Handler) Summary(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) CustomerHistory(w http.ResponseWriter, r *http.Request) {
+	companyID, ok := auth.GetCompanyID(r.Context())
+	if !ok {
+		api.WriteError(w, http.StatusUnauthorized, "UNAUTHORIZED", "unauthorized")
+		return
+	}
 	customerID, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
 		api.WriteError(w, http.StatusBadRequest, "INVALID_CUSTOMER_ID", "invalid customer id")
@@ -79,7 +89,7 @@ func (h *Handler) CustomerHistory(w http.ResponseWriter, r *http.Request) {
 	}
 	id := pgtype.UUID{Bytes: customerID, Valid: true}
 	if claims.Role == "staff" {
-		orders, fetchErr := h.Queries.ListCustomerOrdersForStaff(r.Context(), id)
+		orders, fetchErr := h.Queries.ListCustomerOrdersForStaff(r.Context(), db.ListCustomerOrdersForStaffParams{CustomerID: id, CompanyID: companyID})
 		if fetchErr != nil {
 			api.WriteError(w, http.StatusInternalServerError, "CUSTOMER_HISTORY_FAILED", "failed to load customer history")
 			return
@@ -90,18 +100,23 @@ func (h *Handler) CustomerHistory(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, orders)
 		return
 	}
-	orders, err := h.Queries.ListCustomerOrdersForAdmin(r.Context(), id)
+	orders, err := h.Queries.ListCustomerOrdersForAdmin(r.Context(), db.ListCustomerOrdersForAdminParams{CustomerID: id, CompanyID: companyID})
 	if err != nil {
 		api.WriteError(w, http.StatusInternalServerError, "CUSTOMER_HISTORY_FAILED", "failed to load customer history")
 		return
 	}
 	if orders == nil {
-		orders = []db.Order{}
+		orders = []db.ListCustomerOrdersForAdminRow{}
 	}
 	writeJSON(w, http.StatusOK, orders)
 }
 
 func (h *Handler) ProblemOrders(w http.ResponseWriter, r *http.Request) {
+	companyID, ok := auth.GetCompanyID(r.Context())
+	if !ok {
+		api.WriteError(w, http.StatusUnauthorized, "UNAUTHORIZED", "unauthorized")
+		return
+	}
 	query := r.URL.Query()
 	if query.Get("status") == "" {
 		query.Set("status", "follow_up")
@@ -114,7 +129,7 @@ func (h *Handler) ProblemOrders(w http.ResponseWriter, r *http.Request) {
 	}
 	limit := int32(500)
 	if claims.Role == "staff" {
-		orders, err := h.Queries.ListProblemOrdersForStaff(r.Context(), limit)
+		orders, err := h.Queries.ListProblemOrdersForStaff(r.Context(), db.ListProblemOrdersForStaffParams{Limit: limit, Column2: companyID})
 		if err != nil {
 			api.WriteError(w, http.StatusInternalServerError, "PROBLEM_ORDERS_FAILED", "failed to load problem orders")
 			return
@@ -125,23 +140,29 @@ func (h *Handler) ProblemOrders(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, orders)
 		return
 	}
-	orders, err := h.Queries.ListProblemOrdersForAdmin(r.Context(), limit)
+	orders, err := h.Queries.ListProblemOrdersForAdmin(r.Context(), db.ListProblemOrdersForAdminParams{Limit: limit, Column2: companyID})
 	if err != nil {
 		api.WriteError(w, http.StatusInternalServerError, "PROBLEM_ORDERS_FAILED", "failed to load problem orders")
 		return
 	}
 	if orders == nil {
-		orders = []db.Order{}
+		orders = []db.ListProblemOrdersForAdminRow{}
 	}
 	writeJSON(w, http.StatusOK, orders)
 }
 
 func (h *Handler) ExportOrders(w http.ResponseWriter, r *http.Request) {
+	companyID, ok := auth.GetCompanyID(r.Context())
+	if !ok {
+		api.WriteError(w, http.StatusUnauthorized, "UNAUTHORIZED", "unauthorized")
+		return
+	}
 	params, err := parseExportFilters(r)
 	if err != nil {
 		api.WriteError(w, http.StatusBadRequest, "INVALID_EXPORT_FILTER", "invalid export filter")
 		return
 	}
+	params.Column10 = companyID
 	orders, err := h.Queries.ListOrdersForAdmin(r.Context(), params)
 	if err != nil {
 		api.WriteError(w, http.StatusInternalServerError, "EXPORT_FAILED", "failed to export orders")

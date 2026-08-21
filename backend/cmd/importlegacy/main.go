@@ -6,6 +6,7 @@ import (
 	"flag"
 	"log"
 	"os"
+	"strings"
 
 	"oms-backend/internal/db/connection"
 	db "oms-backend/internal/db/generated"
@@ -21,7 +22,7 @@ func main() {
 		_ = godotenv.Load(".env")
 	}
 	sourceDir := flag.String("source-dir", "", "directory containing source CSV files")
-	sourceURL := flag.String("source-url", legacyimport.DefaultSourceURL, "authoritative CSV base URL")
+	sourceURL := flag.String("source-url", legacyimport.ConfiguredSourceURL(), "authoritative CSV base URL")
 	reviewPath := flag.String("review-log", "legacy-import-review.jsonl", "JSONL manual-review log")
 	year := flag.Int("year", 0, "year for tab dates, required")
 	source := flag.String("source", "", "OMS order source enum, required")
@@ -37,6 +38,9 @@ func main() {
 		log.Fatal("invalid created-by UUID")
 	}
 	if *sourceDir == "" {
+		if strings.TrimSpace(*sourceURL) == "" {
+			log.Fatal("--source-url or LEGACY_SOURCE_URL is required when --source-dir is not provided")
+		}
 		*sourceDir = "legacy-source"
 		if err := legacyimport.DownloadSources(*sourceDir, *sourceURL); err != nil {
 			log.Fatal(err)
@@ -52,6 +56,11 @@ func main() {
 		log.Fatal(err)
 	}
 	defer pool.Close()
+	creatorContext, err := db.New(pool).GetUserAuthContext(context.Background(), pgtypeUUID(creator))
+	if err != nil || !creatorContext.IsActive {
+		log.Fatal("created-by user does not exist or is inactive")
+	}
+	companyID := creatorContext.CompanyID
 
 	file, err := os.Open(*sourceDir + string(os.PathSeparator) + "orders.csv")
 	if err != nil {
@@ -63,7 +72,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	importer := &legacyimport.Importer{Pool: pool, Queries: db.New(pool), CreatedBy: pgtypeUUID(creator), Source: db.OrderSource(*source), Year: *year, Review: review}
+	importer := &legacyimport.Importer{Pool: pool, Queries: db.New(pool), CreatedBy: pgtypeUUID(creator), CompanyID: companyID, Source: db.OrderSource(*source), Year: *year, Review: review}
 	counts, err := importer.ImportDaily(context.Background(), rows)
 	if err != nil {
 		log.Fatal(err)
@@ -90,7 +99,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	productCounts, productReview, err := legacyimport.ImportProducts(context.Background(), db.New(pool), productsFile)
+	productCounts, productReview, err := legacyimport.ImportProducts(context.Background(), db.New(pool), productsFile, companyID)
 	productsFile.Close()
 	if err != nil {
 		log.Fatal(err)
@@ -102,7 +111,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	locationCounts, locationReview, err := legacyimport.AuditLocations(context.Background(), db.New(pool), locationFile)
+	locationCounts, locationReview, err := legacyimport.AuditLocations(context.Background(), db.New(pool), locationFile, companyID)
 	locationFile.Close()
 	if err != nil {
 		log.Fatal(err)

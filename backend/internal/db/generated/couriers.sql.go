@@ -8,37 +8,63 @@ package db
 import (
 	"context"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const createCourier = `-- name: CreateCourier :one
-INSERT INTO couriers (name)
-VALUES ($1)
+INSERT INTO couriers (name, company_id)
+VALUES ($1, $2)
 RETURNING id, name, created_at
 `
 
-func (q *Queries) CreateCourier(ctx context.Context, name string) (Courier, error) {
-	row := q.db.QueryRow(ctx, createCourier, name)
-	var i Courier
+type CreateCourierParams struct {
+	Name      string
+	CompanyID pgtype.UUID
+}
+
+type CreateCourierRow struct {
+	ID        pgtype.UUID
+	Name      string
+	CreatedAt pgtype.Timestamptz
+}
+
+func (q *Queries) CreateCourier(ctx context.Context, arg CreateCourierParams) (CreateCourierRow, error) {
+	row := q.db.QueryRow(ctx, createCourier, arg.Name, arg.CompanyID)
+	var i CreateCourierRow
 	err := row.Scan(&i.ID, &i.Name, &i.CreatedAt)
 	return i, err
 }
 
 const createCourierLocation = `-- name: CreateCourierLocation :one
-INSERT INTO courier_locations (courier_id, location_name, delivery_charge)
-VALUES ($1, $2, $3)
+INSERT INTO courier_locations (courier_id, company_id, location_name, delivery_charge)
+    VALUES ($1, $2, $3, $4)
 RETURNING id, courier_id, location_name, delivery_charge, created_at
 `
 
 type CreateCourierLocationParams struct {
 	CourierID      pgtype.UUID
+	CompanyID      pgtype.UUID
 	LocationName   string
 	DeliveryCharge pgtype.Numeric
 }
 
-func (q *Queries) CreateCourierLocation(ctx context.Context, arg CreateCourierLocationParams) (CourierLocation, error) {
-	row := q.db.QueryRow(ctx, createCourierLocation, arg.CourierID, arg.LocationName, arg.DeliveryCharge)
-	var i CourierLocation
+type CreateCourierLocationRow struct {
+	ID             pgtype.UUID
+	CourierID      pgtype.UUID
+	LocationName   string
+	DeliveryCharge pgtype.Numeric
+	CreatedAt      pgtype.Timestamptz
+}
+
+func (q *Queries) CreateCourierLocation(ctx context.Context, arg CreateCourierLocationParams) (CreateCourierLocationRow, error) {
+	row := q.db.QueryRow(ctx, createCourierLocation,
+		arg.CourierID,
+		arg.CompanyID,
+		arg.LocationName,
+		arg.DeliveryCharge,
+	)
+	var i CreateCourierLocationRow
 	err := row.Scan(
 		&i.ID,
 		&i.CourierID,
@@ -49,40 +75,55 @@ func (q *Queries) CreateCourierLocation(ctx context.Context, arg CreateCourierLo
 	return i, err
 }
 
-const deleteCourier = `-- name: DeleteCourier :exec
+const deleteCourier = `-- name: DeleteCourier :execresult
 DELETE FROM couriers
-WHERE id = $1
+WHERE id = $1 AND company_id = $2
 `
 
-func (q *Queries) DeleteCourier(ctx context.Context, id pgtype.UUID) error {
-	_, err := q.db.Exec(ctx, deleteCourier, id)
-	return err
+type DeleteCourierParams struct {
+	ID        pgtype.UUID
+	CompanyID pgtype.UUID
 }
 
-const deleteCourierLocation = `-- name: DeleteCourierLocation :exec
+func (q *Queries) DeleteCourier(ctx context.Context, arg DeleteCourierParams) (pgconn.CommandTag, error) {
+	return q.db.Exec(ctx, deleteCourier, arg.ID, arg.CompanyID)
+}
+
+const deleteCourierLocation = `-- name: DeleteCourierLocation :execresult
 DELETE FROM courier_locations
-WHERE id = $1 AND courier_id = $2
+    WHERE id = $1 AND courier_id = $2 AND company_id = $3
 `
 
 type DeleteCourierLocationParams struct {
 	ID        pgtype.UUID
 	CourierID pgtype.UUID
+	CompanyID pgtype.UUID
 }
 
-func (q *Queries) DeleteCourierLocation(ctx context.Context, arg DeleteCourierLocationParams) error {
-	_, err := q.db.Exec(ctx, deleteCourierLocation, arg.ID, arg.CourierID)
-	return err
+func (q *Queries) DeleteCourierLocation(ctx context.Context, arg DeleteCourierLocationParams) (pgconn.CommandTag, error) {
+	return q.db.Exec(ctx, deleteCourierLocation, arg.ID, arg.CourierID, arg.CompanyID)
 }
 
 const getCourier = `-- name: GetCourier :one
 SELECT id, name, created_at
 FROM couriers
-WHERE id = $1
+WHERE id = $1 AND company_id = $2
 `
 
-func (q *Queries) GetCourier(ctx context.Context, id pgtype.UUID) (Courier, error) {
-	row := q.db.QueryRow(ctx, getCourier, id)
-	var i Courier
+type GetCourierParams struct {
+	ID        pgtype.UUID
+	CompanyID pgtype.UUID
+}
+
+type GetCourierRow struct {
+	ID        pgtype.UUID
+	Name      string
+	CreatedAt pgtype.Timestamptz
+}
+
+func (q *Queries) GetCourier(ctx context.Context, arg GetCourierParams) (GetCourierRow, error) {
+	row := q.db.QueryRow(ctx, getCourier, arg.ID, arg.CompanyID)
+	var i GetCourierRow
 	err := row.Scan(&i.ID, &i.Name, &i.CreatedAt)
 	return i, err
 }
@@ -90,17 +131,26 @@ func (q *Queries) GetCourier(ctx context.Context, id pgtype.UUID) (Courier, erro
 const getCourierLocation = `-- name: GetCourierLocation :one
 SELECT id, courier_id, location_name, delivery_charge, created_at
 FROM courier_locations
-WHERE id = $1 AND courier_id = $2
+    WHERE id = $1 AND courier_id = $2 AND company_id = $3
 `
 
 type GetCourierLocationParams struct {
 	ID        pgtype.UUID
 	CourierID pgtype.UUID
+	CompanyID pgtype.UUID
 }
 
-func (q *Queries) GetCourierLocation(ctx context.Context, arg GetCourierLocationParams) (CourierLocation, error) {
-	row := q.db.QueryRow(ctx, getCourierLocation, arg.ID, arg.CourierID)
-	var i CourierLocation
+type GetCourierLocationRow struct {
+	ID             pgtype.UUID
+	CourierID      pgtype.UUID
+	LocationName   string
+	DeliveryCharge pgtype.Numeric
+	CreatedAt      pgtype.Timestamptz
+}
+
+func (q *Queries) GetCourierLocation(ctx context.Context, arg GetCourierLocationParams) (GetCourierLocationRow, error) {
+	row := q.db.QueryRow(ctx, getCourierLocation, arg.ID, arg.CourierID, arg.CompanyID)
+	var i GetCourierLocationRow
 	err := row.Scan(
 		&i.ID,
 		&i.CourierID,
@@ -114,19 +164,32 @@ func (q *Queries) GetCourierLocation(ctx context.Context, arg GetCourierLocation
 const listCourierLocations = `-- name: ListCourierLocations :many
 SELECT id, courier_id, location_name, delivery_charge, created_at
 FROM courier_locations
-WHERE courier_id = $1
+    WHERE courier_id = $1 AND company_id = $2
 ORDER BY location_name ASC
 `
 
-func (q *Queries) ListCourierLocations(ctx context.Context, courierID pgtype.UUID) ([]CourierLocation, error) {
-	rows, err := q.db.Query(ctx, listCourierLocations, courierID)
+type ListCourierLocationsParams struct {
+	CourierID pgtype.UUID
+	CompanyID pgtype.UUID
+}
+
+type ListCourierLocationsRow struct {
+	ID             pgtype.UUID
+	CourierID      pgtype.UUID
+	LocationName   string
+	DeliveryCharge pgtype.Numeric
+	CreatedAt      pgtype.Timestamptz
+}
+
+func (q *Queries) ListCourierLocations(ctx context.Context, arg ListCourierLocationsParams) ([]ListCourierLocationsRow, error) {
+	rows, err := q.db.Query(ctx, listCourierLocations, arg.CourierID, arg.CompanyID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []CourierLocation
+	var items []ListCourierLocationsRow
 	for rows.Next() {
-		var i CourierLocation
+		var i ListCourierLocationsRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.CourierID,
@@ -147,18 +210,25 @@ func (q *Queries) ListCourierLocations(ctx context.Context, courierID pgtype.UUI
 const listCouriers = `-- name: ListCouriers :many
 SELECT id, name, created_at
 FROM couriers
+WHERE company_id = $1
 ORDER BY name ASC
 `
 
-func (q *Queries) ListCouriers(ctx context.Context) ([]Courier, error) {
-	rows, err := q.db.Query(ctx, listCouriers)
+type ListCouriersRow struct {
+	ID        pgtype.UUID
+	Name      string
+	CreatedAt pgtype.Timestamptz
+}
+
+func (q *Queries) ListCouriers(ctx context.Context, companyID pgtype.UUID) ([]ListCouriersRow, error) {
+	rows, err := q.db.Query(ctx, listCouriers, companyID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []Courier
+	var items []ListCouriersRow
 	for rows.Next() {
-		var i Courier
+		var i ListCouriersRow
 		if err := rows.Scan(&i.ID, &i.Name, &i.CreatedAt); err != nil {
 			return nil, err
 		}
@@ -172,46 +242,63 @@ func (q *Queries) ListCouriers(ctx context.Context) ([]Courier, error) {
 
 const updateCourier = `-- name: UpdateCourier :one
 UPDATE couriers
-SET name = $2
-WHERE id = $1
+SET name = $3
+WHERE id = $1 AND company_id = $2
 RETURNING id, name, created_at
 `
 
 type UpdateCourierParams struct {
-	ID   pgtype.UUID
-	Name string
+	ID        pgtype.UUID
+	CompanyID pgtype.UUID
+	Name      string
 }
 
-func (q *Queries) UpdateCourier(ctx context.Context, arg UpdateCourierParams) (Courier, error) {
-	row := q.db.QueryRow(ctx, updateCourier, arg.ID, arg.Name)
-	var i Courier
+type UpdateCourierRow struct {
+	ID        pgtype.UUID
+	Name      string
+	CreatedAt pgtype.Timestamptz
+}
+
+func (q *Queries) UpdateCourier(ctx context.Context, arg UpdateCourierParams) (UpdateCourierRow, error) {
+	row := q.db.QueryRow(ctx, updateCourier, arg.ID, arg.CompanyID, arg.Name)
+	var i UpdateCourierRow
 	err := row.Scan(&i.ID, &i.Name, &i.CreatedAt)
 	return i, err
 }
 
 const updateCourierLocation = `-- name: UpdateCourierLocation :one
 UPDATE courier_locations
-SET location_name = $3,
-    delivery_charge = $4
-WHERE id = $1 AND courier_id = $2
+SET location_name = $4,
+    delivery_charge = $5
+   WHERE id = $1 AND courier_id = $2 AND company_id = $3
 RETURNING id, courier_id, location_name, delivery_charge, created_at
 `
 
 type UpdateCourierLocationParams struct {
 	ID             pgtype.UUID
 	CourierID      pgtype.UUID
+	CompanyID      pgtype.UUID
 	LocationName   string
 	DeliveryCharge pgtype.Numeric
 }
 
-func (q *Queries) UpdateCourierLocation(ctx context.Context, arg UpdateCourierLocationParams) (CourierLocation, error) {
+type UpdateCourierLocationRow struct {
+	ID             pgtype.UUID
+	CourierID      pgtype.UUID
+	LocationName   string
+	DeliveryCharge pgtype.Numeric
+	CreatedAt      pgtype.Timestamptz
+}
+
+func (q *Queries) UpdateCourierLocation(ctx context.Context, arg UpdateCourierLocationParams) (UpdateCourierLocationRow, error) {
 	row := q.db.QueryRow(ctx, updateCourierLocation,
 		arg.ID,
 		arg.CourierID,
+		arg.CompanyID,
 		arg.LocationName,
 		arg.DeliveryCharge,
 	)
-	var i CourierLocation
+	var i UpdateCourierLocationRow
 	err := row.Scan(
 		&i.ID,
 		&i.CourierID,

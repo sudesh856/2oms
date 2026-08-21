@@ -325,30 +325,14 @@ function statusLabel(status?: string) {
 function Login() {
   const navigate = useNavigate();
 
-  const [setupAvailable, setSetupAvailable] = useState(false);
   const [setupMode, setSetupMode] = useState(false);
   const [setupName, setSetupName] = useState("");
+  const [companyName, setCompanyName] = useState("");
   const [phone, setPhone] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
 
   const [loading, setLoading] = useState(false);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    fetchWithRetry(`${API}/auth/setup/status`, {})
-      .then(async (response) => {
-        if (!response.ok) return;
-        const data = await response.json();
-        if (!cancelled) setSetupAvailable(data.available === true);
-      })
-      .catch(() => undefined);
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   async function handleLogin(event: React.FormEvent) {
     event.preventDefault();
@@ -401,6 +385,7 @@ function Login() {
         },
         body: JSON.stringify({
           name: setupName,
+          company_name: companyName,
           phone,
           password,
         }),
@@ -439,6 +424,17 @@ function Login() {
         </p>
 
         <form onSubmit={setupMode ? handleSetup : handleLogin} className="stack">
+          {setupMode && (
+            <label>
+              Company name
+              <input
+                value={companyName}
+                onChange={(event) => setCompanyName(event.target.value)}
+                required
+              />
+            </label>
+          )}
+
           {setupMode && (
             <label>
               Name
@@ -498,7 +494,7 @@ function Login() {
           >
             Back to sign in
           </button>
-        ) : setupAvailable ? (
+        ) : (
           <button
             className="button ghost full"
             type="button"
@@ -506,7 +502,7 @@ function Login() {
           >
             Create organization account
           </button>
-        ) : null}
+        )}
       </div>
     </div>
   );

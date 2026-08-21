@@ -20,9 +20,11 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-const DefaultSourceURL = "https://stellar-blini-407075.netlify.app/"
-
 var nonDigits = regexp.MustCompile(`\D`)
+
+func ConfiguredSourceURL() string {
+	return strings.TrimSpace(os.Getenv("LEGACY_SOURCE_URL"))
+}
 
 type DailyRow struct {
 	Line     int
@@ -233,12 +235,16 @@ func AuditHandOff(reader io.Reader, dailyPhones map[string]bool, source string) 
 	return counts, review, nil
 }
 
-func ImportProducts(ctx context.Context, queries *db.Queries, reader io.Reader) (ReferenceCounts, []ReviewRow, error) {
+func ImportProducts(ctx context.Context, queries *db.Queries, reader io.Reader, companyIDs ...pgtype.UUID) (ReferenceCounts, []ReviewRow, error) {
+	companyID := pgtype.UUID{}
+	if len(companyIDs) > 0 {
+		companyID = companyIDs[0]
+	}
 	rows, err := readRecords(reader)
 	if err != nil {
 		return ReferenceCounts{}, nil, err
 	}
-	existing, err := queries.ListProducts(ctx, "")
+	existing, err := queries.ListProducts(ctx, db.ListProductsParams{CompanyID: companyID, Column2: ""})
 	if err != nil {
 		return ReferenceCounts{}, nil, err
 	}
@@ -274,7 +280,7 @@ func ImportProducts(ctx context.Context, queries *db.Queries, reader io.Reader) 
 		}
 		available := numericInt(row["Final Stock"])
 		warehouse := numericInt(row["Godam"])
-		if _, err := queries.CreateProduct(ctx, db.CreateProductParams{Name: name, Price: price, AvailableQty: available, WarehouseQty: warehouse}); err != nil {
+		if _, err := queries.CreateProduct(ctx, db.CreateProductParams{Name: name, Price: price, AvailableQty: available, WarehouseQty: warehouse, CompanyID: companyID}); err != nil {
 			return counts, review, err
 		}
 		known[key] = true
@@ -312,12 +318,16 @@ func AuditExchange(reader io.Reader) (ReferenceCounts, []ReviewRow, error) {
 	return counts, review, nil
 }
 
-func AuditLocations(ctx context.Context, queries *db.Queries, reader io.Reader) (ReferenceCounts, []ReviewRow, error) {
+func AuditLocations(ctx context.Context, queries *db.Queries, reader io.Reader, companyIDs ...pgtype.UUID) (ReferenceCounts, []ReviewRow, error) {
+	companyID := pgtype.UUID{}
+	if len(companyIDs) > 0 {
+		companyID = companyIDs[0]
+	}
 	rows, err := readRecords(reader)
 	if err != nil {
 		return ReferenceCounts{}, nil, err
 	}
-	couriers, err := queries.ListCouriers(ctx)
+	couriers, err := queries.ListCouriers(ctx, companyID)
 	if err != nil {
 		return ReferenceCounts{}, nil, err
 	}
@@ -330,7 +340,7 @@ func AuditLocations(ctx context.Context, queries *db.Queries, reader io.Reader) 
 	if !ncm.Valid {
 		return ReferenceCounts{}, nil, fmt.Errorf("NCM courier is not seeded")
 	}
-	locations, err := queries.ListCourierLocations(ctx, ncm)
+	locations, err := queries.ListCourierLocations(ctx, db.ListCourierLocationsParams{CourierID: ncm, CompanyID: companyID})
 	if err != nil {
 		return ReferenceCounts{}, nil, err
 	}
@@ -405,6 +415,7 @@ type Importer struct {
 	Pool      *pgxpool.Pool
 	Queries   *db.Queries
 	CreatedBy pgtype.UUID
+	CompanyID pgtype.UUID
 	Source    db.OrderSource
 	Year      int
 	Review    []ReviewRow
@@ -412,7 +423,7 @@ type Importer struct {
 
 func (i *Importer) ImportDaily(ctx context.Context, rows []DailyRow) (Counts, error) {
 	counts := Counts{Read: len(rows)}
-	products, err := i.Queries.ListProducts(ctx, "")
+	products, err := i.Queries.ListProducts(ctx, db.ListProductsParams{CompanyID: i.CompanyID, Column2: ""})
 	if err != nil {
 		return counts, err
 	}
@@ -453,15 +464,16 @@ func (i *Importer) ImportDaily(ctx context.Context, rows []DailyRow) (Counts, er
 			CustomerID: customerID, Source: i.Source, Status: status, Address: row.Address,
 			CodAmount: cod, IsStoreVisit: strings.EqualFold(row.Status, "store visit"),
 			CreatedBy: i.CreatedBy, CreatedAt: pgtype.Timestamptz{Time: createdAt, Valid: true},
+			CompanyID: i.CompanyID,
 		})
 		if err == nil {
-			_, err = queries.CreateOrderItem(ctx, db.CreateOrderItemParams{OrderID: order.ID, ProductID: product.ID, Quantity: 1, Price: product.Price})
+			_, err = queries.CreateOrderItem(ctx, db.CreateOrderItemParams{OrderID: order.ID, ProductID: product.ID, Quantity: 1, Price: product.Price, CompanyID: i.CompanyID})
 		}
 		if err == nil {
-			_, err = queries.CreateStatusHistory(ctx, db.CreateStatusHistoryParams{OrderID: order.ID, ToStatus: status, ChangedBy: i.CreatedBy})
+			_, err = queries.CreateStatusHistory(ctx, db.CreateStatusHistoryParams{OrderID: order.ID, ToStatus: status, ChangedBy: i.CreatedBy, CompanyID: i.CompanyID})
 		}
 		if err == nil && followUpAction != "" {
-			_, err = queries.CreateFollowUp(ctx, db.CreateFollowUpParams{OrderID: order.ID, AttemptNo: 1, NextAction: pgtype.Text{String: followUpAction, Valid: true}, Note: pgtype.Text{String: row.Remarks, Valid: row.Remarks != ""}, AssignedTo: i.CreatedBy})
+			_, err = queries.CreateFollowUp(ctx, db.CreateFollowUpParams{OrderID: order.ID, AttemptNo: 1, NextAction: pgtype.Text{String: followUpAction, Valid: true}, Note: pgtype.Text{String: row.Remarks, Valid: row.Remarks != ""}, AssignedTo: i.CreatedBy, CompanyID: i.CompanyID})
 		}
 		if err != nil {
 			tx.Rollback(ctx)
@@ -477,14 +489,14 @@ func (i *Importer) ImportDaily(ctx context.Context, rows []DailyRow) (Counts, er
 
 func (i *Importer) findOrCreateCustomer(ctx context.Context, row DailyRow) (pgtype.UUID, error) {
 	phone := NormalizePhone(row.Phone)
-	customer, err := i.Queries.GetCustomerByPhone(ctx, phone)
+	customer, err := i.Queries.GetCustomerByPhone(ctx, db.GetCustomerByPhoneParams{Phone: phone, CompanyID: i.CompanyID})
 	if err == nil {
 		return customer.ID, nil
 	}
 	if err != pgx.ErrNoRows {
 		return pgtype.UUID{}, err
 	}
-	customer, err = i.Queries.CreateCustomer(ctx, db.CreateCustomerParams{Phone: phone, Phone2: pgtype.Text{String: NormalizePhone(row.Phone2), Valid: NormalizePhone(row.Phone2) != ""}, Name: row.Name, Address: pgtype.Text{String: row.Address, Valid: true}})
+	customer, err = i.Queries.CreateCustomer(ctx, db.CreateCustomerParams{Phone: phone, Phone2: pgtype.Text{String: NormalizePhone(row.Phone2), Valid: NormalizePhone(row.Phone2) != ""}, Name: row.Name, Address: pgtype.Text{String: row.Address, Valid: true}, CompanyID: i.CompanyID})
 	if err != nil {
 		return pgtype.UUID{}, err
 	}

@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 
+	"oms-backend/internal/auth"
 	db "oms-backend/internal/db/generated"
 
 	"github.com/go-chi/chi/v5"
@@ -37,6 +38,11 @@ type updateProductRequest struct {
 }
 
 func (h *Handler) CreateProduct(w http.ResponseWriter, r *http.Request) {
+	companyID, ok := auth.GetCompanyID(r.Context())
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
 	var req createProductRequest
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -75,6 +81,7 @@ func (h *Handler) CreateProduct(w http.ResponseWriter, r *http.Request) {
 			Price:        price,
 			AvailableQty: req.AvailableQty,
 			WarehouseQty: req.WarehouseQty,
+			CompanyID:    companyID,
 		},
 	)
 	if err != nil {
@@ -86,6 +93,11 @@ func (h *Handler) CreateProduct(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) GetProduct(w http.ResponseWriter, r *http.Request) {
+	companyID, ok := auth.GetCompanyID(r.Context())
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
 	id := chi.URLParam(r, "id")
 
 	var productID pgtype.UUID
@@ -97,7 +109,7 @@ func (h *Handler) GetProduct(w http.ResponseWriter, r *http.Request) {
 
 	product, err := h.Queries.GetProductByID(
 		r.Context(),
-		productID,
+		db.GetProductByIDParams{ID: productID, CompanyID: companyID},
 	)
 	if err != nil {
 		if err == pgx.ErrNoRows {
@@ -113,11 +125,16 @@ func (h *Handler) GetProduct(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) ListProducts(w http.ResponseWriter, r *http.Request) {
+	companyID, ok := auth.GetCompanyID(r.Context())
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
 	search := strings.TrimSpace(r.URL.Query().Get("search"))
 
 	products, err := h.Queries.ListProducts(
 		r.Context(),
-		search,
+		db.ListProductsParams{CompanyID: companyID, Column2: search},
 	)
 	if err != nil {
 		http.Error(w, "failed to list products", http.StatusInternalServerError)
@@ -132,6 +149,11 @@ func (h *Handler) ListProducts(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) UpdateProduct(w http.ResponseWriter, r *http.Request) {
+	companyID, ok := auth.GetCompanyID(r.Context())
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
 	id := chi.URLParam(r, "id")
 
 	var productID pgtype.UUID
@@ -180,6 +202,7 @@ func (h *Handler) UpdateProduct(w http.ResponseWriter, r *http.Request) {
 			Price:        price,
 			AvailableQty: req.AvailableQty,
 			WarehouseQty: req.WarehouseQty,
+			CompanyID:    companyID,
 		},
 	)
 	if err != nil {

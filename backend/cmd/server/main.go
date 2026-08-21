@@ -61,7 +61,7 @@ func main() {
 	courierHandler := couriers.NewHandler(queries)
 	reportHandler := reports.NewHandler(queries)
 	userHandler := users.NewHandler(queries)
-	r := NewRouter(jwtSecret, authHandler, orderHandler, customerHandler, productHandler, courierHandler, reportHandler, userHandler)
+	r := NewRouter(jwtSecret, authHandler, orderHandler, customerHandler, productHandler, courierHandler, reportHandler, userHandler, queries)
 
 	port := os.Getenv("PORT")
 	if port == "" {
@@ -84,6 +84,7 @@ func NewRouter(
 	courierHandler *couriers.Handler,
 	reportHandler *reports.Handler,
 	userHandler *users.Handler,
+	queryOptions ...*db.Queries,
 ) *chi.Mux {
 	r := chi.NewRouter()
 	r.Use(cors.Handler(cors.Options{
@@ -104,7 +105,7 @@ func NewRouter(
 	r.Post("/api/auth/accept-invitation/{token}", authHandler.AcceptInvitation)
 
 	r.Group(func(r chi.Router) {
-		r.Use(auth.RequireAuth(jwtSecret))
+		r.Use(auth.RequireAuth(jwtSecret, queryOptions...))
 
 		r.Get("/api/me", auth.Me)
 

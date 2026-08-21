@@ -27,6 +27,7 @@ func (s *Service) UpdateStatus(
 	fromStatus db.OrderStatus,
 	toStatus db.OrderStatus,
 	userID pgtype.UUID,
+	companyID pgtype.UUID,
 ) error {
 	if err := ValidateTransition(string(fromStatus), string(toStatus)); err != nil {
 		return err
@@ -43,9 +44,10 @@ func (s *Service) UpdateStatus(
 	order, err := queries.UpdateOrderStatus(
 		ctx,
 		db.UpdateOrderStatusParams{
-			ID:       orderID,
-			Status:   toStatus,
-			Status_2: fromStatus,
+			ID:        orderID,
+			Status:    toStatus,
+			Status_2:  fromStatus,
+			CompanyID: companyID,
 		},
 	)
 	if err != nil {
@@ -66,6 +68,7 @@ func (s *Service) UpdateStatus(
 			},
 			ToStatus:  toStatus,
 			ChangedBy: userID,
+			CompanyID: companyID,
 		},
 	)
 	if err != nil {

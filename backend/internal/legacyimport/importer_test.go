@@ -35,6 +35,17 @@ func TestParseDailyFixtureNormalizesAndLogsMalformedRows(t *testing.T) {
 	}
 }
 
+func TestConfiguredSourceURLRequiresServerConfiguration(t *testing.T) {
+	t.Setenv("LEGACY_SOURCE_URL", "")
+	if source := ConfiguredSourceURL(); source != "" {
+		t.Fatalf("expected no implicit historical source URL, got %q", source)
+	}
+	t.Setenv("LEGACY_SOURCE_URL", "https://private.example/legacy/")
+	if source := ConfiguredSourceURL(); source != "https://private.example/legacy/" {
+		t.Fatalf("unexpected configured source URL: %q", source)
+	}
+}
+
 func TestImportDailyFixtureUsesRealDatabaseAndDeduplicatesCustomers(t *testing.T) {
 	databaseURL := os.Getenv("DATABASE_URL")
 	if databaseURL == "" {

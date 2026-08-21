@@ -8,6 +8,7 @@ package db
 import (
 	"context"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -18,6 +19,7 @@ SET password_hash = $2,
         invitation_token_hash = NULL,
         invitation_expires_at = NULL
 WHERE id = $1
+    AND company_id = $4
     AND invitation_token_hash = $3
     AND is_active = FALSE
     AND invitation_expires_at > NOW()
@@ -28,6 +30,7 @@ type AcceptInvitationParams struct {
 	ID                  pgtype.UUID
 	PasswordHash        string
 	InvitationTokenHash pgtype.Text
+	CompanyID           pgtype.UUID
 }
 
 type AcceptInvitationRow struct {
@@ -40,7 +43,12 @@ type AcceptInvitationRow struct {
 }
 
 func (q *Queries) AcceptInvitation(ctx context.Context, arg AcceptInvitationParams) (AcceptInvitationRow, error) {
-	row := q.db.QueryRow(ctx, acceptInvitation, arg.ID, arg.PasswordHash, arg.InvitationTokenHash)
+	row := q.db.QueryRow(ctx, acceptInvitation,
+		arg.ID,
+		arg.PasswordHash,
+		arg.InvitationTokenHash,
+		arg.CompanyID,
+	)
 	var i AcceptInvitationRow
 	err := row.Scan(
 		&i.ID,
@@ -61,9 +69,10 @@ INSERT INTO users (
         role,
         is_active,
         invitation_token_hash,
-        invitation_expires_at
+        invitation_expires_at,
+        company_id
 )
-VALUES ($1, $2, $3, $4, FALSE, $5, $6)
+    VALUES ($1, $2, $3, $4, FALSE, $5, $6, $7)
 RETURNING id, name, phone, role, is_active, invitation_expires_at, created_at
 `
 
@@ -74,6 +83,7 @@ type CreateInvitedUserParams struct {
 	Role                UserRole
 	InvitationTokenHash pgtype.Text
 	InvitationExpiresAt pgtype.Timestamptz
+	CompanyID           pgtype.UUID
 }
 
 type CreateInvitedUserRow struct {
@@ -94,6 +104,7 @@ func (q *Queries) CreateInvitedUser(ctx context.Context, arg CreateInvitedUserPa
 		arg.Role,
 		arg.InvitationTokenHash,
 		arg.InvitationExpiresAt,
+		arg.CompanyID,
 	)
 	var i CreateInvitedUserRow
 	err := row.Scan(
@@ -113,16 +124,19 @@ INSERT INTO users (
     name,
     phone,
     password_hash,
-    role
+    role,
+    company_id
 )
 VALUES (
     $1,
     $2,
     $3,
-    $4
+    $4,
+    $5
 )
 RETURNING
     id,
+    company_id,
     name,
     phone,
     password_hash,
@@ -136,10 +150,12 @@ type CreateUserParams struct {
 	Phone        string
 	PasswordHash string
 	Role         UserRole
+	CompanyID    pgtype.UUID
 }
 
 type CreateUserRow struct {
 	ID           pgtype.UUID
+	CompanyID    pgtype.UUID
 	Name         string
 	Phone        string
 	PasswordHash string
@@ -154,10 +170,12 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (CreateU
 		arg.Phone,
 		arg.PasswordHash,
 		arg.Role,
+		arg.CompanyID,
 	)
 	var i CreateUserRow
 	err := row.Scan(
 		&i.ID,
+		&i.CompanyID,
 		&i.Name,
 		&i.Phone,
 		&i.PasswordHash,
@@ -169,7 +187,7 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (CreateU
 }
 
 const getInvitation = `-- name: GetInvitation :one
-SELECT id, name, phone, role
+SELECT id, company_id, name, phone, role
 FROM users
 WHERE invitation_token_hash = $1
     AND is_active = FALSE
@@ -178,10 +196,11 @@ LIMIT 1
 `
 
 type GetInvitationRow struct {
-	ID    pgtype.UUID
-	Name  string
-	Phone string
-	Role  UserRole
+	ID        pgtype.UUID
+	CompanyID pgtype.UUID
+	Name      string
+	Phone     string
+	Role      UserRole
 }
 
 func (q *Queries) GetInvitation(ctx context.Context, invitationTokenHash pgtype.Text) (GetInvitationRow, error) {
@@ -189,6 +208,7 @@ func (q *Queries) GetInvitation(ctx context.Context, invitationTokenHash pgtype.
 	var i GetInvitationRow
 	err := row.Scan(
 		&i.ID,
+		&i.CompanyID,
 		&i.Name,
 		&i.Phone,
 		&i.Role,
@@ -209,9 +229,36 @@ func (q *Queries) GetSetupStatus(ctx context.Context) (bool, error) {
 	return has_users, err
 }
 
+const getUserAuthContext = `-- name: GetUserAuthContext :one
+SELECT id, company_id, role, is_active
+FROM users
+WHERE id = $1
+LIMIT 1
+`
+
+type GetUserAuthContextRow struct {
+	ID        pgtype.UUID
+	CompanyID pgtype.UUID
+	Role      UserRole
+	IsActive  bool
+}
+
+func (q *Queries) GetUserAuthContext(ctx context.Context, id pgtype.UUID) (GetUserAuthContextRow, error) {
+	row := q.db.QueryRow(ctx, getUserAuthContext, id)
+	var i GetUserAuthContextRow
+	err := row.Scan(
+		&i.ID,
+		&i.CompanyID,
+		&i.Role,
+		&i.IsActive,
+	)
+	return i, err
+}
+
 const getUserByPhone = `-- name: GetUserByPhone :one
 SELECT
     id,
+    company_id,
     name,
     phone,
     password_hash,
@@ -225,6 +272,7 @@ LIMIT 1
 
 type GetUserByPhoneRow struct {
 	ID           pgtype.UUID
+	CompanyID    pgtype.UUID
 	Name         string
 	Phone        string
 	PasswordHash string
@@ -238,6 +286,7 @@ func (q *Queries) GetUserByPhone(ctx context.Context, phone string) (GetUserByPh
 	var i GetUserByPhoneRow
 	err := row.Scan(
 		&i.ID,
+		&i.CompanyID,
 		&i.Name,
 		&i.Phone,
 		&i.PasswordHash,
@@ -249,16 +298,18 @@ func (q *Queries) GetUserByPhone(ctx context.Context, phone string) (GetUserByPh
 }
 
 const listUsers = `-- name: ListUsers :many
-SELECT id, name, phone, role, is_active,
+SELECT id, company_id, name, phone, role, is_active,
              invitation_token_hash IS NOT NULL
              AND invitation_expires_at > NOW() AS invitation_pending,
              created_at
 FROM users
+WHERE company_id = $1
 ORDER BY created_at ASC
 `
 
 type ListUsersRow struct {
 	ID                pgtype.UUID
+	CompanyID         pgtype.UUID
 	Name              string
 	Phone             string
 	Role              UserRole
@@ -267,8 +318,8 @@ type ListUsersRow struct {
 	CreatedAt         pgtype.Timestamptz
 }
 
-func (q *Queries) ListUsers(ctx context.Context) ([]ListUsersRow, error) {
-	rows, err := q.db.Query(ctx, listUsers)
+func (q *Queries) ListUsers(ctx context.Context, companyID pgtype.UUID) ([]ListUsersRow, error) {
+	rows, err := q.db.Query(ctx, listUsers, companyID)
 	if err != nil {
 		return nil, err
 	}
@@ -278,6 +329,7 @@ func (q *Queries) ListUsers(ctx context.Context) ([]ListUsersRow, error) {
 		var i ListUsersRow
 		if err := rows.Scan(
 			&i.ID,
+			&i.CompanyID,
 			&i.Name,
 			&i.Phone,
 			&i.Role,
@@ -299,12 +351,14 @@ const resetUserPassword = `-- name: ResetUserPassword :one
 UPDATE users
 SET password_hash = $2
 WHERE id = $1
+    AND company_id = $3
 RETURNING id, name, phone, role, is_active, created_at
 `
 
 type ResetUserPasswordParams struct {
 	ID           pgtype.UUID
 	PasswordHash string
+	CompanyID    pgtype.UUID
 }
 
 type ResetUserPasswordRow struct {
@@ -317,7 +371,7 @@ type ResetUserPasswordRow struct {
 }
 
 func (q *Queries) ResetUserPassword(ctx context.Context, arg ResetUserPasswordParams) (ResetUserPasswordRow, error) {
-	row := q.db.QueryRow(ctx, resetUserPassword, arg.ID, arg.PasswordHash)
+	row := q.db.QueryRow(ctx, resetUserPassword, arg.ID, arg.PasswordHash, arg.CompanyID)
 	var i ResetUserPasswordRow
 	err := row.Scan(
 		&i.ID,
@@ -330,17 +384,22 @@ func (q *Queries) ResetUserPassword(ctx context.Context, arg ResetUserPasswordPa
 	return i, err
 }
 
-const revokeInvitation = `-- name: RevokeInvitation :exec
+const revokeInvitation = `-- name: RevokeInvitation :execresult
 UPDATE users
 SET invitation_token_hash = NULL,
         invitation_expires_at = NULL
 WHERE id = $1
+    AND company_id = $2
     AND is_active = FALSE
 `
 
-func (q *Queries) RevokeInvitation(ctx context.Context, id pgtype.UUID) error {
-	_, err := q.db.Exec(ctx, revokeInvitation, id)
-	return err
+type RevokeInvitationParams struct {
+	ID        pgtype.UUID
+	CompanyID pgtype.UUID
+}
+
+func (q *Queries) RevokeInvitation(ctx context.Context, arg RevokeInvitationParams) (pgconn.CommandTag, error) {
+	return q.db.Exec(ctx, revokeInvitation, arg.ID, arg.CompanyID)
 }
 
 const updateInvitation = `-- name: UpdateInvitation :one
@@ -349,6 +408,7 @@ SET invitation_token_hash = $2,
         invitation_expires_at = $3,
         is_active = FALSE
 WHERE id = $1
+    AND company_id = $4
     AND is_active = FALSE
 RETURNING id, name, phone, role, is_active, invitation_expires_at, created_at
 `
@@ -357,6 +417,7 @@ type UpdateInvitationParams struct {
 	ID                  pgtype.UUID
 	InvitationTokenHash pgtype.Text
 	InvitationExpiresAt pgtype.Timestamptz
+	CompanyID           pgtype.UUID
 }
 
 type UpdateInvitationRow struct {
@@ -370,7 +431,12 @@ type UpdateInvitationRow struct {
 }
 
 func (q *Queries) UpdateInvitation(ctx context.Context, arg UpdateInvitationParams) (UpdateInvitationRow, error) {
-	row := q.db.QueryRow(ctx, updateInvitation, arg.ID, arg.InvitationTokenHash, arg.InvitationExpiresAt)
+	row := q.db.QueryRow(ctx, updateInvitation,
+		arg.ID,
+		arg.InvitationTokenHash,
+		arg.InvitationExpiresAt,
+		arg.CompanyID,
+	)
 	var i UpdateInvitationRow
 	err := row.Scan(
 		&i.ID,
@@ -388,12 +454,14 @@ const updateUserActive = `-- name: UpdateUserActive :one
 UPDATE users
 SET is_active = $2
 WHERE id = $1
+    AND company_id = $3
 RETURNING id, name, phone, role, is_active, created_at
 `
 
 type UpdateUserActiveParams struct {
-	ID       pgtype.UUID
-	IsActive bool
+	ID        pgtype.UUID
+	IsActive  bool
+	CompanyID pgtype.UUID
 }
 
 type UpdateUserActiveRow struct {
@@ -406,7 +474,7 @@ type UpdateUserActiveRow struct {
 }
 
 func (q *Queries) UpdateUserActive(ctx context.Context, arg UpdateUserActiveParams) (UpdateUserActiveRow, error) {
-	row := q.db.QueryRow(ctx, updateUserActive, arg.ID, arg.IsActive)
+	row := q.db.QueryRow(ctx, updateUserActive, arg.ID, arg.IsActive, arg.CompanyID)
 	var i UpdateUserActiveRow
 	err := row.Scan(
 		&i.ID,

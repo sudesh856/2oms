@@ -3,13 +3,15 @@ INSERT INTO order_items (
     order_id,
     product_id,
     quantity,
-    price
+    price,
+    company_id
 )
 VALUES (
     $1,
     $2,
     $3,
-    $4
+    $4,
+    $5
 )
 RETURNING
     id,
@@ -27,5 +29,5 @@ SELECT
     quantity,
     price
 FROM order_items
-WHERE order_id = $1
+WHERE order_id = $1 AND company_id = $2
 ORDER BY id;

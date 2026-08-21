@@ -4,11 +4,13 @@ SELECT
     COUNT(*) FILTER (WHERE o.status = 'confirmed')::int AS pending_confirmations,
     COUNT(*) FILTER (WHERE o.status IN ('follow_up', 'hold', 'redirected', 'cancelled', 'returned'))::int AS problem_orders,
     COUNT(*)::int AS total_orders
-FROM orders o;
+FROM orders o
+WHERE o.company_id = $3::uuid;
 
 -- name: ListDashboardStatusCounts :many
 SELECT status, COUNT(*)::int AS count
 FROM orders
+WHERE company_id = $1::uuid
 GROUP BY status
 ORDER BY status;
 
@@ -17,6 +19,7 @@ SELECT c.name AS courier_name, COUNT(*)::int AS count
 FROM orders o
 LEFT JOIN couriers c ON c.id = o.courier_id
 WHERE o.created_at >= $1::timestamptz AND o.created_at < $2::timestamptz
+    AND o.company_id = $3::uuid
 GROUP BY c.name
 ORDER BY c.name;
 
@@ -33,6 +36,7 @@ FROM follow_ups f
 JOIN orders o ON o.id = f.order_id
 JOIN customers c ON c.id = o.customer_id
 WHERE f.next_action_date = $1::date
+    AND f.company_id = $2::uuid
 ORDER BY f.created_at ASC;
 
 -- name: ListProblemOrdersForAdmin :many
@@ -41,6 +45,7 @@ SELECT o.id, o.customer_id, o.source, o.status, o.courier_id, o.location_id,
        o.updated_at, o.is_legacy
 FROM orders o
 WHERE o.status IN ('follow_up', 'hold', 'redirected', 'cancelled', 'returned')
+    AND o.company_id = $2::uuid
 ORDER BY o.created_at DESC
 LIMIT $1;
 
@@ -50,5 +55,6 @@ SELECT o.id, o.customer_id, o.source, o.status, o.courier_id, o.location_id,
        o.updated_at, o.is_legacy
 FROM orders o
 WHERE o.status IN ('follow_up', 'hold', 'redirected', 'cancelled', 'returned')
+    AND o.company_id = $2::uuid
 ORDER BY o.created_at DESC
 LIMIT $1;

@@ -16,13 +16,15 @@ INSERT INTO order_items (
     order_id,
     product_id,
     quantity,
-    price
+    price,
+    company_id
 )
 VALUES (
     $1,
     $2,
     $3,
-    $4
+    $4,
+    $5
 )
 RETURNING
     id,
@@ -37,16 +39,26 @@ type CreateOrderItemParams struct {
 	ProductID pgtype.UUID
 	Quantity  int32
 	Price     pgtype.Numeric
+	CompanyID pgtype.UUID
 }
 
-func (q *Queries) CreateOrderItem(ctx context.Context, arg CreateOrderItemParams) (OrderItem, error) {
+type CreateOrderItemRow struct {
+	ID        pgtype.UUID
+	OrderID   pgtype.UUID
+	ProductID pgtype.UUID
+	Quantity  int32
+	Price     pgtype.Numeric
+}
+
+func (q *Queries) CreateOrderItem(ctx context.Context, arg CreateOrderItemParams) (CreateOrderItemRow, error) {
 	row := q.db.QueryRow(ctx, createOrderItem,
 		arg.OrderID,
 		arg.ProductID,
 		arg.Quantity,
 		arg.Price,
+		arg.CompanyID,
 	)
-	var i OrderItem
+	var i CreateOrderItemRow
 	err := row.Scan(
 		&i.ID,
 		&i.OrderID,
@@ -65,19 +77,32 @@ SELECT
     quantity,
     price
 FROM order_items
-WHERE order_id = $1
+WHERE order_id = $1 AND company_id = $2
 ORDER BY id
 `
 
-func (q *Queries) ListOrderItems(ctx context.Context, orderID pgtype.UUID) ([]OrderItem, error) {
-	rows, err := q.db.Query(ctx, listOrderItems, orderID)
+type ListOrderItemsParams struct {
+	OrderID   pgtype.UUID
+	CompanyID pgtype.UUID
+}
+
+type ListOrderItemsRow struct {
+	ID        pgtype.UUID
+	OrderID   pgtype.UUID
+	ProductID pgtype.UUID
+	Quantity  int32
+	Price     pgtype.Numeric
+}
+
+func (q *Queries) ListOrderItems(ctx context.Context, arg ListOrderItemsParams) ([]ListOrderItemsRow, error) {
+	rows, err := q.db.Query(ctx, listOrderItems, arg.OrderID, arg.CompanyID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []OrderItem
+	var items []ListOrderItemsRow
 	for rows.Next() {
-		var i OrderItem
+		var i ListOrderItemsRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.OrderID,
