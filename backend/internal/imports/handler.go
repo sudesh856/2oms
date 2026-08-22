@@ -61,19 +61,30 @@ func (h *Handler) Start(w http.ResponseWriter, r *http.Request) {
 		api.WriteError(w, http.StatusBadRequest, "INVALID_SOURCE", "invalid order source")
 		return
 	}
-	if _, err := h.Queries.GetLegacyImportRun(r.Context(), companyID); err == nil {
-		api.WriteError(w, http.StatusConflict, "IMPORT_ALREADY_EXISTS", "historical import has already been started for this company")
-		return
+	run, err := h.Queries.GetLegacyImportRun(r.Context(), companyID)
+	if err == nil {
+		if run.Status != "failed" {
+			api.WriteError(w, http.StatusConflict, "IMPORT_ALREADY_EXISTS", "historical import has already started or completed for this company")
+			return
+		}
+		run, err = h.Queries.RetryFailedLegacyImportRun(r.Context(), db.RetryFailedLegacyImportRunParams{
+			ID: run.ID, CompanyID: companyID, TriggeredBy: pgtype.UUID{Bytes: userID, Valid: true},
+		})
+		if err != nil {
+			api.WriteError(w, http.StatusConflict, "IMPORT_ALREADY_EXISTS", "historical import has already started or completed for this company")
+			return
+		}
 	} else if err != pgx.ErrNoRows {
 		api.WriteError(w, http.StatusInternalServerError, "IMPORT_STATUS_FAILED", "failed to check import status")
 		return
-	}
-	run, err := h.Queries.CreateLegacyImportRun(r.Context(), db.CreateLegacyImportRunParams{
-		CompanyID: companyID, TriggeredBy: pgtype.UUID{Bytes: userID, Valid: true},
-	})
-	if err != nil {
-		api.WriteError(w, http.StatusConflict, "IMPORT_ALREADY_EXISTS", "historical import has already been started for this company")
-		return
+	} else {
+		run, err = h.Queries.CreateLegacyImportRun(r.Context(), db.CreateLegacyImportRunParams{
+			CompanyID: companyID, TriggeredBy: pgtype.UUID{Bytes: userID, Valid: true},
+		})
+		if err != nil {
+			api.WriteError(w, http.StatusConflict, "IMPORT_ALREADY_EXISTS", "historical import has already started or completed for this company")
+			return
+		}
 	}
 
 	go h.run(context.Background(), run.ID, companyID, pgtype.UUID{Bytes: userID, Valid: true}, request)

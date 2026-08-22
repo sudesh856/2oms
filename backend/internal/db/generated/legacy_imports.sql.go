@@ -88,6 +88,17 @@ func (q *Queries) CreateLegacyImportRun(ctx context.Context, arg CreateLegacyImp
 	return i, err
 }
 
+const failInterruptedLegacyImportRuns = `-- name: FailInterruptedLegacyImportRuns :exec
+UPDATE legacy_import_runs
+SET status = 'failed', error_message = 'import interrupted by server restart', completed_at = NOW()
+WHERE status IN ('queued', 'running')
+`
+
+func (q *Queries) FailInterruptedLegacyImportRuns(ctx context.Context) error {
+	_, err := q.db.Exec(ctx, failInterruptedLegacyImportRuns)
+	return err
+}
+
 const getLegacyImportRun = `-- name: GetLegacyImportRun :one
 SELECT id, company_id, triggered_by, status, rows_read, rows_inserted, rows_skipped,
        error_message, created_at, started_at, completed_at
@@ -97,6 +108,40 @@ WHERE company_id = $1
 
 func (q *Queries) GetLegacyImportRun(ctx context.Context, companyID pgtype.UUID) (LegacyImportRun, error) {
 	row := q.db.QueryRow(ctx, getLegacyImportRun, companyID)
+	var i LegacyImportRun
+	err := row.Scan(
+		&i.ID,
+		&i.CompanyID,
+		&i.TriggeredBy,
+		&i.Status,
+		&i.RowsRead,
+		&i.RowsInserted,
+		&i.RowsSkipped,
+		&i.ErrorMessage,
+		&i.CreatedAt,
+		&i.StartedAt,
+		&i.CompletedAt,
+	)
+	return i, err
+}
+
+const retryFailedLegacyImportRun = `-- name: RetryFailedLegacyImportRun :one
+UPDATE legacy_import_runs
+SET status = 'queued', triggered_by = $3, rows_read = 0, rows_inserted = 0,
+    rows_skipped = 0, error_message = NULL, started_at = NULL, completed_at = NULL
+WHERE id = $1 AND company_id = $2 AND status = 'failed'
+RETURNING id, company_id, triggered_by, status, rows_read, rows_inserted, rows_skipped,
+          error_message, created_at, started_at, completed_at
+`
+
+type RetryFailedLegacyImportRunParams struct {
+	ID          pgtype.UUID
+	CompanyID   pgtype.UUID
+	TriggeredBy pgtype.UUID
+}
+
+func (q *Queries) RetryFailedLegacyImportRun(ctx context.Context, arg RetryFailedLegacyImportRunParams) (LegacyImportRun, error) {
+	row := q.db.QueryRow(ctx, retryFailedLegacyImportRun, arg.ID, arg.CompanyID, arg.TriggeredBy)
 	var i LegacyImportRun
 	err := row.Scan(
 		&i.ID,

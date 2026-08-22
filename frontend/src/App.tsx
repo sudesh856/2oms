@@ -3072,8 +3072,7 @@ function LegacyImport() {
     return () => window.clearInterval(timer);
   }, [status]);
 
-  async function startImport(event: React.FormEvent) {
-    event.preventDefault();
+  async function startImport() {
     if (!window.confirm("Start the historical import for this company? It can only be started once.")) return;
     setSaving(true);
     setError("");
@@ -3108,12 +3107,15 @@ function LegacyImport() {
               <div className="compact-row"><span>Rows inserted</span><strong>{run.RowsInserted ?? 0}</strong></div>
               <div className="compact-row"><span>Rows skipped</span><strong>{run.RowsSkipped ?? 0}</strong></div>
             </div>
-            {status === "failed" && <div className="alert error">{errorMessage || "The import failed."}</div>}
+            {status === "failed" && <>
+              <div className="alert error">{errorMessage || "The import failed."}</div>
+              <button className="button primary" type="button" onClick={() => void startImport()} disabled={saving}>Retry import</button>
+            </>}
             {status === "completed" && <div className="alert success">Import completed. Imported records are available in Orders, Customers, Products, and Couriers.</div>}
             {(status === "queued" || status === "running") && <p className="muted">The import is running. This page refreshes automatically.</p>}
           </div>
         ) : (
-          <form className="stack" onSubmit={startImport}>
+          <form className="stack" onSubmit={(event) => { event.preventDefault(); void startImport(); }}>
             <div className="section-heading"><div><span className="eyebrow">One-time setup</span><h2>Import historical records</h2></div></div>
             <p className="muted">This imports the existing CSV history for this company and ignores duplicate historical rows.</p>
             <div className="form-grid">

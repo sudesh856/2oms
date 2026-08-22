@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"log"
 	"net/http"
 	"oms-backend/internal/products"
@@ -50,6 +51,9 @@ func main() {
 	defer dbPool.Close()
 
 	queries := db.New(dbPool)
+	if err := recoverInterruptedImports(context.Background(), queries); err != nil {
+		log.Fatalf("legacy import recovery failed: %v", err)
+	}
 
 	authHandler := &auth.Handler{
 		Queries: queries,
@@ -75,6 +79,10 @@ func main() {
 	if err := http.ListenAndServe(":"+port, r); err != nil {
 		log.Fatal(err)
 	}
+}
+
+func recoverInterruptedImports(ctx context.Context, queries *db.Queries) error {
+	return queries.FailInterruptedLegacyImportRuns(ctx)
 }
 
 func NewRouter(

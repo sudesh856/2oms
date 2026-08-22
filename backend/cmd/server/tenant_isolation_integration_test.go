@@ -238,6 +238,58 @@ func TestLegacyImportCannotCrossTenantBoundary(t *testing.T) {
 	}
 }
 
+func TestLegacyImportRecoveryAllowsRetryButBlocksCompleted(t *testing.T) {
+	_ = godotenv.Load("../../../.env")
+	databaseURL := os.Getenv("DATABASE_URL")
+	secret := os.Getenv("JWT_SECRET")
+	if databaseURL == "" || secret == "" {
+		t.Skip("DATABASE_URL and JWT_SECRET are required")
+	}
+	pool, err := connection.NewPool(databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	ctx := context.Background()
+	var migrated bool
+	if err := pool.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'legacy_import_runs')").Scan(&migrated); err != nil || !migrated {
+		t.Skip("legacy import migration 000008 is not applied")
+	}
+	first, err := createTenantFixture(ctx, pool, "recovery-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := createTenantFixture(ctx, pool, "recovery-b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanupTenantFixtures(t, pool, first.companyID, second.companyID)
+	if _, err := pool.Exec(ctx, "INSERT INTO legacy_import_runs (company_id, triggered_by, status) VALUES ($1, $2, 'running'), ($3, $4, 'completed')", first.companyID, first.userID, second.companyID, second.userID); err != nil {
+		t.Fatal(err)
+	}
+	if err := recoverInterruptedImports(ctx, db.New(pool)); err != nil {
+		t.Fatal(err)
+	}
+	var status, message string
+	if err := pool.QueryRow(ctx, "SELECT status, COALESCE(error_message, '') FROM legacy_import_runs WHERE company_id = $1", first.companyID).Scan(&status, &message); err != nil {
+		t.Fatal(err)
+	}
+	if status != "failed" || message != "import interrupted by server restart" {
+		t.Fatalf("running import was not recovered: %s %q", status, message)
+	}
+	router := newIntegrationRouterWithPool(t, pool, secret)
+	token := mustTenantToken(t, first.userID, first.companyID, secret)
+	statusCode, body := tenantRequest(router, token, http.MethodPost, "/api/imports/legacy", `{"year":2025,"source":"phone"}`)
+	if statusCode != http.StatusAccepted {
+		t.Fatalf("failed import could not be retried: %d %s", statusCode, body)
+	}
+	completedToken := mustTenantToken(t, second.userID, second.companyID, secret)
+	statusCode, body = tenantRequest(router, completedToken, http.MethodPost, "/api/imports/legacy", `{"year":2025,"source":"phone"}`)
+	if statusCode != http.StatusConflict || !strings.Contains(body, "IMPORT_ALREADY_EXISTS") {
+		t.Fatalf("completed import was not blocked: %d %s", statusCode, body)
+	}
+}
+
 func TestLegacyCourierLocationsAreNCMOnly(t *testing.T) {
 	_ = godotenv.Load("../../../.env")
 	databaseURL := os.Getenv("DATABASE_URL")
