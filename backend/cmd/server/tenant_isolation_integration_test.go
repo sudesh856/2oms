@@ -178,6 +178,54 @@ func TestTenantIsolationAcrossRegisteredResources(t *testing.T) {
 	checkCompanyNotNull(t, pool)
 }
 
+func TestCreateOrderSetsOrderItemCompanyID(t *testing.T) {
+	_ = godotenv.Load("../../../.env")
+	databaseURL := os.Getenv("DATABASE_URL")
+	secret := os.Getenv("JWT_SECRET")
+	if databaseURL == "" || secret == "" {
+		t.Skip("DATABASE_URL and JWT_SECRET are required")
+	}
+
+	pool, err := connection.NewPool(databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	ctx := context.Background()
+	fixture, err := createTenantFixture(ctx, pool, "order-item-company")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanupTenantFixtures(t, pool, fixture.companyID)
+
+	router := newIntegrationRouterWithPool(t, pool, secret)
+	token := mustTenantToken(t, fixture.userID, fixture.companyID, secret)
+	status, body := tenantRequest(
+		router,
+		token,
+		http.MethodPost,
+		"/api/orders",
+		`{"customer_id":"`+fixture.customerID.String()+`","source":"phone","address":"delivery address","cod_amount":"100","items":[{"product_id":"`+fixture.productID.String()+`","quantity":1}]}`,
+	)
+	if status != http.StatusCreated {
+		t.Fatalf("order creation failed: %d %s", status, body)
+	}
+
+	var response struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal([]byte(body), &response); err != nil || response.ID == "" {
+		t.Fatalf("order response did not contain an id: %s", body)
+	}
+	var itemCompanyID uuid.UUID
+	if err := pool.QueryRow(ctx, `SELECT company_id FROM order_items WHERE order_id = $1`, response.ID).Scan(&itemCompanyID); err != nil {
+		t.Fatal(err)
+	}
+	if itemCompanyID != fixture.companyID {
+		t.Fatalf("order item company_id = %s, expected %s", itemCompanyID, fixture.companyID)
+	}
+}
+
 func TestLegacyImportCannotCrossTenantBoundary(t *testing.T) {
 	_ = godotenv.Load("../../../.env")
 	databaseURL := os.Getenv("DATABASE_URL")

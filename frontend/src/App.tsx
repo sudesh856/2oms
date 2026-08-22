@@ -10,7 +10,14 @@ import {
   useParams,
 } from "react-router-dom";
 import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from "recharts";
-
+import {
+  calculateCartTotal,
+  normalizeCustomer,
+  normalizeProduct,
+  type CartItem,
+  type Customer,
+  type Product,
+} from "./orderHelpers";
 const API = import.meta.env.VITE_API_BASE_URL || "http://localhost:8080/api";
 
 type Role = "superadmin" | "admin" | "staff";
@@ -20,60 +27,6 @@ type TokenPayload = {
   user_id?: string;
   exp?: number;
 };
-
-type Customer = {
-  id: string;
-  phone: string;
-  phone2?: string | null;
-  name: string;
-  address?: string | null;
-  created_at?: string;
-};
-
-function normalizeCustomer(value: Partial<Customer> & {
-  ID?: string;
-  Phone?: string;
-  Phone2?: string | null;
-  Name?: string;
-  Address?: string | null;
-  CreatedAt?: string;
-}): Customer {
-  return {
-    id: value.id ?? value.ID ?? "",
-    phone: value.phone ?? value.Phone ?? "",
-    phone2: value.phone2 ?? value.Phone2,
-    name: value.name ?? value.Name ?? "",
-    address: value.address ?? value.Address,
-    created_at: value.created_at ?? value.CreatedAt,
-  };
-}
-
-type Product = {
-  id: string;
-  name: string;
-  price: unknown;
-  available_qty: number;
-  warehouse_qty: number;
-  created_at?: string;
-};
-
-function normalizeProduct(value: Partial<Product> & {
-  ID?: string;
-  Name?: string;
-  Price?: unknown;
-  AvailableQty?: number;
-  WarehouseQty?: number;
-  CreatedAt?: string;
-}): Product {
-  return {
-    id: value.id ?? value.ID ?? "",
-    name: value.name ?? value.Name ?? "",
-    price: value.price ?? value.Price,
-    available_qty: value.available_qty ?? value.AvailableQty ?? 0,
-    warehouse_qty: value.warehouse_qty ?? value.WarehouseQty ?? 0,
-    created_at: value.created_at ?? value.CreatedAt,
-  };
-}
 
 type Order = {
   id: string;
@@ -174,11 +127,6 @@ type ConfirmedCourierCount = {
   LocationName?: string | null;
   OrderCount: number;
   ProductCount: number;
-};
-
-type CartItem = {
-  product: Product;
-  quantity: number;
 };
 
 type User = {
@@ -1764,9 +1712,9 @@ function CreateOrder() {
         const response = await apiFetch(`/customers/${customerId}`);
 
         if (response.ok) {
-          const data = await response.json();
-          setCustomer(data);
-          setAddress(data.address || "");
+          const customer = normalizeCustomer(await response.json());
+          setCustomer(customer);
+          setAddress(customer.address || "");
         }
       } catch {
         // Customer can still be selected manually.
@@ -1793,7 +1741,8 @@ function CreateOrder() {
         throw new Error(await readError(response));
       }
 
-      setCustomerResults(await response.json());
+      const data = await response.json();
+      setCustomerResults(data.map(normalizeCustomer));
     } catch (err) {
       setError(
         err instanceof Error
@@ -1815,7 +1764,8 @@ function CreateOrder() {
         throw new Error(await readError(response));
       }
 
-      setProducts(await response.json());
+      const data = await response.json();
+      setProducts(data.map(normalizeProduct));
     } catch (err) {
       setError(
         err instanceof Error
@@ -1870,6 +1820,10 @@ function CreateOrder() {
   }
 
   function changeQuantity(productId: string, quantity: number) {
+    if (!Number.isFinite(quantity) || quantity < 1) {
+      return;
+    }
+
     setCart((current) =>
       current
         .map((item) => {
@@ -1887,18 +1841,10 @@ function CreateOrder() {
             quantity: next,
           };
         })
-        .filter((item) => item.quantity > 0)
     );
   }
 
-  const total = useMemo(() => {
-    return cart.reduce((sum, item) => {
-      return (
-        sum +
-        Number(item.product.price) * item.quantity
-      );
-    }, 0);
-  }, [cart]);
+  const total = useMemo(() => calculateCartTotal(cart), [cart]);
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
@@ -2021,6 +1967,12 @@ function CreateOrder() {
                       onChange={(event) =>
                         setCustomerSearch(event.target.value)
                       }
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") {
+                          event.preventDefault();
+                          void searchCustomers();
+                        }
+                      }}
                       placeholder="Search customer by name or phone..."
                     />
 

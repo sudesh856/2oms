@@ -80,20 +80,39 @@ func TestImportDailyFixtureUsesRealDatabaseAndDeduplicatesCustomers(t *testing.T
 	ctx := context.Background()
 
 	productName := "legacy-fixture-" + uuid.NewString()
-	product, err := db.New(pool).CreateProduct(ctx, db.CreateProductParams{Name: productName, Price: numeric(t, "100"), AvailableQty: 10, WarehouseQty: 10})
+	testPhone := "98" + strings.ReplaceAll(uuid.NewString(), "-", "")[:8]
+	var userID pgtype.UUID
+	var companyID pgtype.UUID
+	if err := pool.QueryRow(ctx, "SELECT id, company_id FROM users LIMIT 1").Scan(&userID, &companyID); err != nil {
+		t.Skip("no users available in database")
+	}
+	product, err := db.New(pool).CreateProduct(ctx, db.CreateProductParams{Name: productName, Price: numeric(t, "100"), AvailableQty: 10, WarehouseQty: 10, CompanyID: companyID})
 	if err != nil {
 		t.Fatalf("create product: %v", err)
 	}
-	defer pool.Exec(ctx, "DELETE FROM products WHERE id = $1", product.ID)
-
-	var userID pgtype.UUID
-	if err := pool.QueryRow(ctx, "SELECT id FROM users LIMIT 1").Scan(&userID); err != nil {
-		t.Skip("no users available in database")
-	}
+	defer func() {
+		statements := []struct {
+			query string
+			arg   any
+		}{
+			{`DELETE FROM status_history WHERE order_id IN (SELECT id FROM orders WHERE customer_id IN (SELECT id FROM customers WHERE phone = $1))`, testPhone},
+			{`DELETE FROM follow_ups WHERE order_id IN (SELECT id FROM orders WHERE customer_id IN (SELECT id FROM customers WHERE phone = $1))`, testPhone},
+			{`DELETE FROM order_items WHERE product_id = $1`, product.ID},
+			{`DELETE FROM orders WHERE customer_id IN (SELECT id FROM customers WHERE phone = $1)`, testPhone},
+			{`DELETE FROM products WHERE id = $1`, product.ID},
+			{`DELETE FROM customers WHERE phone = $1`, testPhone},
+		}
+		for _, statement := range statements {
+			_, err := pool.Exec(ctx, statement.query, statement.arg)
+			if err != nil {
+				t.Errorf("cleanup fixture: %v", err)
+			}
+		}
+	}()
 
 	data := "tab,name,gbl,ncm,address,phone,phone2,product,cod,status,delivery,by,remarks\n" +
-		"Aug 16,Asha,,NCM,Kathmandu,9812345678,," + productName + ",100,confirmed,,,\n" +
-		"Aug 15,Asha,,NCM,Kathmandu,981 234 5678,," + productName + ",100,confirmed,,,\n" +
+		"Aug 16,Asha,,NCM,Kathmandu," + testPhone + ",," + productName + ",100,confirmed,,,\n" +
+		"Aug 15,Asha,,NCM,Kathmandu," + testPhone[:3] + " " + testPhone[3:] + ",," + productName + ",100,confirmed,,,\n" +
 		"Bad row,,,,,,,,,,,,\n"
 	rows, review, err := ParseDaily(strings.NewReader(data), 0)
 	if err != nil {
@@ -113,14 +132,14 @@ func TestImportDailyFixtureUsesRealDatabaseAndDeduplicatesCustomers(t *testing.T
 	}
 
 	var customerCount int
-	if err := pool.QueryRow(ctx, "SELECT COUNT(*) FROM customers WHERE phone = $1", "9812345678").Scan(&customerCount); err != nil {
+	if err := pool.QueryRow(ctx, "SELECT COUNT(*) FROM customers WHERE phone = $1", testPhone).Scan(&customerCount); err != nil {
 		t.Fatal(err)
 	}
 	if customerCount != 1 {
 		t.Fatalf("expected one deduplicated customer, got %d", customerCount)
 	}
 	var legacyCount int
-	if err := pool.QueryRow(ctx, "SELECT COUNT(*) FROM orders o JOIN customers c ON c.id = o.customer_id WHERE c.phone = $1 AND o.is_legacy", "9812345678").Scan(&legacyCount); err != nil {
+	if err := pool.QueryRow(ctx, "SELECT COUNT(*) FROM orders o JOIN customers c ON c.id = o.customer_id WHERE c.phone = $1 AND o.is_legacy", testPhone).Scan(&legacyCount); err != nil {
 		t.Fatal(err)
 	}
 	if legacyCount != 2 {

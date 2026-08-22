@@ -164,6 +164,7 @@ func (s *Service) CreateOrderWithItemsAndWarnings(
 					db.CreateOrderItemParams{
 						OrderID: order.ID, ProductID: productID,
 						Quantity: item.Quantity, Price: productPrice,
+						CompanyID: companyID,
 					},
 				)
 				if err != nil {
@@ -182,6 +183,7 @@ func (s *Service) CreateOrderWithItemsAndWarnings(
 				ProductID: product.ID,
 				Quantity:  item.Quantity,
 				Price:     product.Price,
+				CompanyID: companyID,
 			},
 		)
 		if err != nil {

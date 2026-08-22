@@ -75,10 +75,11 @@ func TestCreateOrderWithItemsWarnsOnInsufficientStock(t *testing.T) {
 	}()
 
 	var userID uuid.UUID
+	var companyID uuid.UUID
 	err = pool.QueryRow(
 		ctx,
-		`SELECT id FROM users LIMIT 1`,
-	).Scan(&userID)
+		`SELECT id, company_id FROM users LIMIT 1`,
+	).Scan(&userID, &companyID)
 	if err != nil {
 		t.Skip("no users available in database")
 	}
@@ -97,6 +98,7 @@ func TestCreateOrderWithItemsWarnsOnInsufficientStock(t *testing.T) {
 		CodAmount:    codAmount,
 		IsStoreVisit: false,
 		CreatedBy:    userID,
+		CompanyID:    companyID,
 		Items: []CreateOrderItem{
 			{
 				ProductID: productID,
@@ -233,10 +235,11 @@ func TestCreateOrderWithItemsSucceedsAndDecrementsStock(t *testing.T) {
 	}()
 
 	var userID uuid.UUID
+	var companyID uuid.UUID
 	err = pool.QueryRow(
 		ctx,
-		`SELECT id FROM users LIMIT 1`,
-	).Scan(&userID)
+		`SELECT id, company_id FROM users LIMIT 1`,
+	).Scan(&userID, &companyID)
 	if err != nil {
 		t.Skip("no users available in database")
 	}
@@ -255,6 +258,7 @@ func TestCreateOrderWithItemsSucceedsAndDecrementsStock(t *testing.T) {
 		CodAmount:    codAmount,
 		IsStoreVisit: false,
 		CreatedBy:    userID,
+		CompanyID:    companyID,
 		Items: []CreateOrderItem{
 			{
 				ProductID: productID,
