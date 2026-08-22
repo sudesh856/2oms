@@ -12,6 +12,7 @@ import (
 	"oms-backend/internal/customers"
 	"oms-backend/internal/db/connection"
 	db "oms-backend/internal/db/generated"
+	"oms-backend/internal/imports"
 	"oms-backend/internal/orders"
 	"oms-backend/internal/products"
 	"oms-backend/internal/reports"
@@ -41,7 +42,7 @@ func TestPhase3RoutesUseRealRouterAndRBAC(t *testing.T) {
 	productHandler := products.NewHandler(queries)
 	courierHandler := couriers.NewHandler(queries)
 	reportHandler := reports.NewHandler(queries)
-	router := NewRouter(jwtSecret, authHandler, orderHandler, customerHandler, productHandler, courierHandler, reportHandler, users.NewHandler(queries))
+	router := NewRouter(jwtSecret, authHandler, orderHandler, customerHandler, productHandler, courierHandler, reportHandler, users.NewHandler(queries), imports.NewHandler(queries, pool))
 
 	staffToken, err := auth.GenerateToken("test-staff-user", "staff", jwtSecret)
 	if err != nil {

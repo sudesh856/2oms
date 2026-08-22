@@ -14,6 +14,7 @@ import (
 	"oms-backend/internal/customers"
 	"oms-backend/internal/db/connection"
 	db "oms-backend/internal/db/generated"
+	"oms-backend/internal/imports"
 	"oms-backend/internal/orders"
 	"oms-backend/internal/products"
 	"oms-backend/internal/reports"
@@ -57,6 +58,8 @@ func TestEveryRegisteredRouteEnforcesRBAC(t *testing.T) {
 		{name: "create follow-up", method: http.MethodPost, path: "/api/orders/not-a-uuid/followup", body: `{}`, allowed: allRoles(), wantStatus: http.StatusBadRequest},
 		{name: "list follow-ups", method: http.MethodGet, path: "/api/followups", allowed: allRoles(), wantStatus: http.StatusOK},
 		{name: "dashboard summary", method: http.MethodGet, path: "/api/dashboard/summary", allowed: allRoles(), wantStatus: http.StatusOK},
+		{name: "legacy import status", method: http.MethodGet, path: "/api/imports/legacy", allowed: map[string]bool{"superadmin": true}, wantStatus: http.StatusNotFound},
+		{name: "legacy import start", method: http.MethodPost, path: "/api/imports/legacy", body: `{}`, allowed: map[string]bool{"superadmin": true}, wantStatus: http.StatusBadRequest},
 		{name: "problem orders", method: http.MethodGet, path: "/api/orders/problems", allowed: allRoles(), wantStatus: http.StatusOK},
 		{name: "export orders", method: http.MethodGet, path: "/api/reports/orders.csv", allowed: adminRoles(), wantStatus: http.StatusOK},
 		{name: "list couriers", method: http.MethodGet, path: "/api/couriers", allowed: adminRoles(), wantStatus: http.StatusOK},
@@ -277,7 +280,7 @@ func newIntegrationRouter(t *testing.T) (*chi.Mux, string, *pgxpool.Pool) {
 		t.Fatalf("failed to connect to database: %v", err)
 	}
 	queries := db.New(pool)
-	router := NewRouter(jwtSecret, &auth.Handler{Queries: queries}, orders.NewHandler(queries, pool), customers.NewHandler(queries), products.NewHandler(queries), couriers.NewHandler(queries), reports.NewHandler(queries), users.NewHandler(queries))
+	router := NewRouter(jwtSecret, &auth.Handler{Queries: queries}, orders.NewHandler(queries, pool), customers.NewHandler(queries), products.NewHandler(queries), couriers.NewHandler(queries), reports.NewHandler(queries), users.NewHandler(queries), imports.NewHandler(queries, pool))
 	return router, jwtSecret, pool
 }
 

@@ -196,21 +196,36 @@ type FollowUp struct {
 	CompanyID      pgtype.UUID
 }
 
-type Order struct {
+type LegacyImportRun struct {
 	ID           pgtype.UUID
-	CustomerID   pgtype.UUID
-	Source       OrderSource
-	Status       OrderStatus
-	CourierID    pgtype.UUID
-	LocationID   pgtype.UUID
-	Address      string
-	CodAmount    pgtype.Numeric
-	IsStoreVisit bool
-	CreatedBy    pgtype.UUID
-	CreatedAt    pgtype.Timestamptz
-	UpdatedAt    pgtype.Timestamptz
-	IsLegacy     bool
 	CompanyID    pgtype.UUID
+	TriggeredBy  pgtype.UUID
+	Status       string
+	RowsRead     int32
+	RowsInserted int32
+	RowsSkipped  int32
+	ErrorMessage pgtype.Text
+	CreatedAt    pgtype.Timestamptz
+	StartedAt    pgtype.Timestamptz
+	CompletedAt  pgtype.Timestamptz
+}
+
+type Order struct {
+	ID              pgtype.UUID
+	CustomerID      pgtype.UUID
+	Source          OrderSource
+	Status          OrderStatus
+	CourierID       pgtype.UUID
+	LocationID      pgtype.UUID
+	Address         string
+	CodAmount       pgtype.Numeric
+	IsStoreVisit    bool
+	CreatedBy       pgtype.UUID
+	CreatedAt       pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
+	IsLegacy        bool
+	CompanyID       pgtype.UUID
+	LegacySourceKey pgtype.Text
 }
 
 type OrderItem struct {

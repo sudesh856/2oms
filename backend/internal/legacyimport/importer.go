@@ -2,6 +2,7 @@ package legacyimport
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/csv"
 	"errors"
 	"fmt"
@@ -73,6 +74,14 @@ func NormalizePhone(value string) string {
 		return ""
 	}
 	return digits[len(digits)-10:]
+}
+
+func LegacySourceKey(row DailyRow) string {
+	value := strings.Join([]string{
+		normalizeName(row.Tab), NormalizePhone(row.Phone), normalizeName(row.Name),
+		normalizeName(row.Address), normalizeName(row.Product), strings.TrimSpace(row.COD),
+	}, "\x1f")
+	return fmt.Sprintf("%x", sha256.Sum256([]byte(value)))
 }
 
 func ParseDaily(reader io.Reader, limit int) ([]DailyRow, []ReviewRow, error) {
@@ -464,8 +473,13 @@ func (i *Importer) ImportDaily(ctx context.Context, rows []DailyRow) (Counts, er
 			CustomerID: customerID, Source: i.Source, Status: status, Address: row.Address,
 			CodAmount: cod, IsStoreVisit: strings.EqualFold(row.Status, "store visit"),
 			CreatedBy: i.CreatedBy, CreatedAt: pgtype.Timestamptz{Time: createdAt, Valid: true},
-			CompanyID: i.CompanyID,
+			CompanyID: i.CompanyID, LegacySourceKey: pgtype.Text{String: LegacySourceKey(row), Valid: true},
 		})
+		if err == pgx.ErrNoRows {
+			_ = tx.Rollback(ctx)
+			counts.Skipped++
+			continue
+		}
 		if err == nil {
 			_, err = queries.CreateOrderItem(ctx, db.CreateOrderItemParams{OrderID: order.ID, ProductID: product.ID, Quantity: 1, Price: product.Price, CompanyID: i.CompanyID})
 		}

@@ -655,6 +655,7 @@ function Layout({ children }: { children: React.ReactNode }) {
             <Link to="/couriers">Couriers</Link>
           )}
           {(role === "admin" || role === "superadmin") && <Link to="/users">Users</Link>}
+          {role === "superadmin" && <Link to="/imports">Import history</Link>}
         </nav>
 
         <div className="sidebar-bottom">
@@ -3030,6 +3031,103 @@ function Users() {
   );
 }
 
+type LegacyImportRun = {
+  ID?: string;
+  Status?: string;
+  RowsRead?: number;
+  RowsInserted?: number;
+  RowsSkipped?: number;
+  ErrorMessage?: { String?: string; Valid?: boolean } | string;
+};
+
+function LegacyImport() {
+  const [year, setYear] = useState(String(new Date().getFullYear()));
+  const [source, setSource] = useState("phone");
+  const [run, setRun] = useState<LegacyImportRun | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const status = run?.Status ?? "";
+
+  async function loadStatus() {
+    try {
+      const response = await apiFetch("/imports/legacy");
+      if (response.status === 404) return;
+      if (!response.ok) throw new Error(await readError(response));
+      setRun(await response.json());
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load import status");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    loadStatus();
+  }, []);
+
+  useEffect(() => {
+    if (status !== "queued" && status !== "running") return;
+    const timer = window.setInterval(loadStatus, 2000);
+    return () => window.clearInterval(timer);
+  }, [status]);
+
+  async function startImport(event: React.FormEvent) {
+    event.preventDefault();
+    if (!window.confirm("Start the historical import for this company? It can only be started once.")) return;
+    setSaving(true);
+    setError("");
+    try {
+      const response = await apiFetch("/imports/legacy", {
+        method: "POST",
+        body: JSON.stringify({ year: Number(year), source }),
+      });
+      if (!response.ok) throw new Error(await readError(response));
+      setRun(await response.json());
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to start historical import");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const errorMessage = typeof run?.ErrorMessage === "string"
+    ? run.ErrorMessage
+    : run?.ErrorMessage?.String;
+
+  return (
+    <Layout>
+      <PageHeader eyebrow="Administration" title="Historical import" description="Import the existing company records into the normal OMS screens." />
+      {error && <div className="alert error">{error}</div>}
+      <section className="card form-card">
+        {loading ? <p className="muted">Loading import status...</p> : run ? (
+          <div className="stack">
+            <div className="section-heading"><div><span className="eyebrow">Import status</span><h2>{status}</h2></div></div>
+            <div className="compact-list">
+              <div className="compact-row"><span>Rows read</span><strong>{run.RowsRead ?? 0}</strong></div>
+              <div className="compact-row"><span>Rows inserted</span><strong>{run.RowsInserted ?? 0}</strong></div>
+              <div className="compact-row"><span>Rows skipped</span><strong>{run.RowsSkipped ?? 0}</strong></div>
+            </div>
+            {status === "failed" && <div className="alert error">{errorMessage || "The import failed."}</div>}
+            {status === "completed" && <div className="alert success">Import completed. Imported records are available in Orders, Customers, Products, and Couriers.</div>}
+            {(status === "queued" || status === "running") && <p className="muted">The import is running. This page refreshes automatically.</p>}
+          </div>
+        ) : (
+          <form className="stack" onSubmit={startImport}>
+            <div className="section-heading"><div><span className="eyebrow">One-time setup</span><h2>Import historical records</h2></div></div>
+            <p className="muted">This imports the existing CSV history for this company and ignores duplicate historical rows.</p>
+            <div className="form-grid">
+              <label>Historical year<input type="number" min="2000" max="2100" value={year} onChange={(event) => setYear(event.target.value)} required /></label>
+              <label>Default order source<select value={source} onChange={(event) => setSource(event.target.value)}><option value="website">Website</option><option value="daraz">Daraz</option><option value="phone">Phone</option><option value="facebook">Facebook</option><option value="instagram">Instagram</option><option value="store">Store</option></select></label>
+            </div>
+            <button className="button primary" type="submit" disabled={saving}>{saving ? "Starting..." : "Start historical import"}</button>
+          </form>
+        )}
+      </section>
+    </Layout>
+  );
+}
+
 function Couriers() {
   const [couriers, setCouriers] = useState<Courier[]>([]);
   const [locations, setLocations] = useState<CourierLocation[]>([]);
@@ -3299,6 +3397,15 @@ export default function App() {
           element={
             <RoleProtectedRoute roles={["admin", "superadmin"]}>
               <Users />
+            </RoleProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/imports"
+          element={
+            <RoleProtectedRoute roles={["superadmin"]}>
+              <LegacyImport />
             </RoleProtectedRoute>
           }
         />

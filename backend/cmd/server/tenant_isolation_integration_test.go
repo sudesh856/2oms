@@ -13,6 +13,7 @@ import (
 	"oms-backend/internal/customers"
 	"oms-backend/internal/db/connection"
 	db "oms-backend/internal/db/generated"
+	"oms-backend/internal/imports"
 	"oms-backend/internal/orders"
 	"oms-backend/internal/products"
 	"oms-backend/internal/reports"
@@ -174,6 +175,97 @@ func TestTenantIsolationAcrossRegisteredResources(t *testing.T) {
 	checkCompanyNotNull(t, pool)
 }
 
+func TestLegacyImportCannotCrossTenantBoundary(t *testing.T) {
+	_ = godotenv.Load("../../../.env")
+	databaseURL := os.Getenv("DATABASE_URL")
+	secret := os.Getenv("JWT_SECRET")
+	if databaseURL == "" || secret == "" {
+		t.Skip("DATABASE_URL and JWT_SECRET are required")
+	}
+	pool, err := connection.NewPool(databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	ctx := context.Background()
+	var migrated bool
+	if err := pool.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'legacy_import_runs')").Scan(&migrated); err != nil {
+		t.Fatal(err)
+	}
+	if !migrated {
+		t.Skip("legacy import migration 000008 is not applied")
+	}
+	first, err := createTenantFixture(ctx, pool, "import-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := createTenantFixture(ctx, pool, "import-b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanupTenantFixtures(t, pool, first.companyID, second.companyID)
+	if _, err := pool.Exec(ctx, "INSERT INTO legacy_import_runs (company_id, triggered_by, status) VALUES ($1, $2, 'completed')", first.companyID, first.userID); err != nil {
+		t.Fatal(err)
+	}
+	router := newIntegrationRouterWithPool(t, pool, secret)
+	firstToken := mustTenantToken(t, first.userID, first.companyID, secret)
+	secondToken := mustTenantToken(t, second.userID, second.companyID, secret)
+	status, body := tenantRequest(router, firstToken, http.MethodGet, "/api/imports/legacy", "")
+	if status != http.StatusOK || !strings.Contains(body, first.companyID.String()) {
+		t.Fatalf("company A could not read its import: %d %s", status, body)
+	}
+	status, body = tenantRequest(router, secondToken, http.MethodGet, "/api/imports/legacy", "")
+	if status != http.StatusNotFound || strings.Contains(body, first.companyID.String()) {
+		t.Fatalf("company B saw company A import: %d %s", status, body)
+	}
+	status, body = tenantRequest(router, secondToken, http.MethodPost, "/api/imports/legacy", `{"year":2025,"source":"phone","company_id":"`+first.companyID.String()+`"}`)
+	if status != http.StatusAccepted {
+		t.Fatalf("company B could not start its own import without trusting body company_id: %d %s", status, body)
+	}
+	var runCompanyID uuid.UUID
+	if err := pool.QueryRow(ctx, "SELECT company_id FROM legacy_import_runs WHERE company_id = $1", second.companyID).Scan(&runCompanyID); err != nil {
+		t.Fatal(err)
+	}
+	if runCompanyID != second.companyID {
+		t.Fatalf("import was assigned to wrong company: %s", runCompanyID)
+	}
+	var firstStatus string
+	if err := pool.QueryRow(ctx, "SELECT status FROM legacy_import_runs WHERE company_id = $1", first.companyID).Scan(&firstStatus); err != nil {
+		t.Fatal(err)
+	}
+	if firstStatus != "completed" {
+		t.Fatalf("company A import was affected by company B: %s", firstStatus)
+	}
+}
+
+func TestLegacyCourierLocationsAreNCMOnly(t *testing.T) {
+	_ = godotenv.Load("../../../.env")
+	databaseURL := os.Getenv("DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("DATABASE_URL is required")
+	}
+	pool, err := connection.NewPool(databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	ctx := context.Background()
+	var migrated bool
+	if err := pool.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM schema_migrations WHERE version >= 9 AND dirty = FALSE)").Scan(&migrated); err != nil {
+		t.Skip("seed correction migration status is unavailable")
+	}
+	if !migrated {
+		t.Skip("courier seed correction migration 000009 is not applied")
+	}
+	var nonNCM int
+	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM courier_locations cl JOIN couriers c ON c.id = cl.courier_id AND c.company_id = cl.company_id JOIN companies co ON co.id = cl.company_id WHERE co.name = 'Default Company' AND c.name IN ('Upaya/Delivery Sansar', 'Pathao/Doorma')`).Scan(&nonNCM); err != nil {
+		t.Fatal(err)
+	}
+	if nonNCM != 0 {
+		t.Fatalf("original company still has %d non-NCM seeded locations", nonNCM)
+	}
+}
+
 func createTenantFixture(ctx context.Context, pool *pgxpool.Pool, suffix string) (tenantFixture, error) {
 	fixture := tenantFixture{
 		companyID: uuid.New(), userID: uuid.New(), customerID: uuid.New(), productID: uuid.New(),
@@ -211,7 +303,12 @@ func createTenantFixture(ctx context.Context, pool *pgxpool.Pool, suffix string)
 func cleanupTenantFixtures(t *testing.T, pool *pgxpool.Pool, companyIDs ...uuid.UUID) {
 	t.Helper()
 	ctx := context.Background()
-	for _, table := range []string{"status_history", "follow_ups", "order_items", "orders", "courier_locations", "couriers", "products", "customers", "users"} {
+	tables := []string{"status_history", "follow_ups", "order_items", "orders", "courier_locations", "couriers", "products", "customers", "users"}
+	var importRunsExists bool
+	if err := pool.QueryRow(ctx, "SELECT to_regclass('public.legacy_import_runs') IS NOT NULL").Scan(&importRunsExists); err == nil && importRunsExists {
+		tables = append([]string{"legacy_import_runs"}, tables...)
+	}
+	for _, table := range tables {
 		if _, err := pool.Exec(ctx, "DELETE FROM "+table+" WHERE company_id = ANY($1)", companyIDs); err != nil {
 			t.Errorf("cleanup %s: %v", table, err)
 		}
@@ -256,5 +353,5 @@ func tenantRequest(router http.Handler, token, method, path, body string) (int, 
 func newIntegrationRouterWithPool(t *testing.T, pool *pgxpool.Pool, secret string) http.Handler {
 	t.Helper()
 	queries := db.New(pool)
-	return NewRouter(secret, &auth.Handler{Queries: queries}, orders.NewHandler(queries, pool), customers.NewHandler(queries), products.NewHandler(queries), couriers.NewHandler(queries), reports.NewHandler(queries), users.NewHandler(queries), queries)
+	return NewRouter(secret, &auth.Handler{Queries: queries}, orders.NewHandler(queries, pool), customers.NewHandler(queries), products.NewHandler(queries), couriers.NewHandler(queries), reports.NewHandler(queries), users.NewHandler(queries), imports.NewHandler(queries, pool), queries)
 }

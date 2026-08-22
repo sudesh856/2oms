@@ -16,6 +16,7 @@ import (
 	"oms-backend/internal/customers"
 	"oms-backend/internal/db/connection"
 	db "oms-backend/internal/db/generated"
+	"oms-backend/internal/imports"
 	"oms-backend/internal/orders"
 	"oms-backend/internal/reports"
 	"oms-backend/internal/users"
@@ -61,7 +62,8 @@ func main() {
 	courierHandler := couriers.NewHandler(queries)
 	reportHandler := reports.NewHandler(queries)
 	userHandler := users.NewHandler(queries)
-	r := NewRouter(jwtSecret, authHandler, orderHandler, customerHandler, productHandler, courierHandler, reportHandler, userHandler, queries)
+	importHandler := imports.NewHandler(queries, dbPool)
+	r := NewRouter(jwtSecret, authHandler, orderHandler, customerHandler, productHandler, courierHandler, reportHandler, userHandler, importHandler, queries)
 
 	port := os.Getenv("PORT")
 	if port == "" {
@@ -84,6 +86,7 @@ func NewRouter(
 	courierHandler *couriers.Handler,
 	reportHandler *reports.Handler,
 	userHandler *users.Handler,
+	importHandler *imports.Handler,
 	queryOptions ...*db.Queries,
 ) *chi.Mux {
 	r := chi.NewRouter()
@@ -152,6 +155,8 @@ func NewRouter(
 		r.With(auth.RequireRole("superadmin", "admin")).Patch("/api/users/{id}", userHandler.Update)
 		r.With(auth.RequireRole("superadmin", "admin")).Post("/api/users/{id}/resend-invitation", userHandler.ResendInvitation)
 		r.With(auth.RequireRole("superadmin", "admin")).Post("/api/users/{id}/revoke-invitation", userHandler.RevokeInvitation)
+		r.With(auth.RequireRole("superadmin")).Post("/api/imports/legacy", importHandler.Start)
+		r.With(auth.RequireRole("superadmin")).Get("/api/imports/legacy", importHandler.Status)
 
 		r.With(auth.RequireRole("staff", "admin", "superadmin")).Get("/api/staff/test", func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
