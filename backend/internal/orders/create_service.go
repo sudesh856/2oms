@@ -22,6 +22,8 @@ type CreateOrderInput struct {
 	Address      string
 	CodAmount    pgtype.Numeric
 	IsStoreVisit bool
+	CourierID    pgtype.UUID
+	LocationID   pgtype.UUID
 	CreatedBy    uuid.UUID
 	CompanyID    uuid.UUID
 	Items        []CreateOrderItem
@@ -79,6 +81,8 @@ func (s *Service) CreateOrderWithItemsAndWarnings(
 				Status:       db.OrderStatusConfirmed,
 				Address:      input.Address,
 				IsStoreVisit: input.IsStoreVisit,
+				CourierID:    input.CourierID,
+				LocationID:   input.LocationID,
 				CreatedBy:    createdBy,
 				CompanyID:    companyID,
 			},
@@ -110,6 +114,8 @@ func (s *Service) CreateOrderWithItemsAndWarnings(
 				Address:      input.Address,
 				CodAmount:    input.CodAmount,
 				IsStoreVisit: input.IsStoreVisit,
+				CourierID:    input.CourierID,
+				LocationID:   input.LocationID,
 				CreatedBy:    createdBy,
 				CompanyID:    companyID,
 			},

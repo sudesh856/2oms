@@ -174,6 +174,10 @@ func TestTenantIsolationAcrossRegisteredResources(t *testing.T) {
 			if status == http.StatusOK || strings.Contains(body, pair.other.name) {
 				t.Errorf("cross-company status update succeeded: %d %s", status, body)
 			}
+			status, body = tenantRequest(router, token, http.MethodPatch, "/api/orders/"+pair.other.orderID.String(), `{"courier_id":"`+pair.own.courierID.String()+`"}`)
+			if status == http.StatusOK || strings.Contains(body, pair.other.name) {
+				t.Errorf("cross-company order update succeeded: %d %s", status, body)
+			}
 		})
 	}
 

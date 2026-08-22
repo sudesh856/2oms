@@ -12,11 +12,17 @@ import {
 import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from "recharts";
 import {
   calculateCartTotal,
+  filterCourierLocations,
+  getValidNextStatuses,
   normalizeCustomer,
+  normalizeCourier,
+  normalizeCourierLocation,
   normalizeOrder,
   normalizeOrderItem,
   normalizeProduct,
   type CartItem,
+  type Courier,
+  type CourierLocation,
   type Customer,
   type Order,
   type OrderItem,
@@ -44,32 +50,6 @@ type FollowUp = {
   assigned_to_name?: string | null;
 };
 
-type Courier = { id: string; name: string };
-
-function normalizeCourier(value: Courier & { ID?: string; Name?: string }): Courier {
-  return {
-    id: value.id ?? value.ID ?? "",
-    name: value.name ?? value.Name ?? "",
-  };
-}
-
-type CourierLocation = {
-  id: string;
-  location_name: string;
-  delivery_charge?: unknown;
-};
-
-function normalizeCourierLocation(value: CourierLocation & {
-  ID?: string;
-  LocationName?: string;
-  DeliveryCharge?: unknown;
-}): CourierLocation {
-  return {
-    id: value.id ?? value.ID ?? "",
-    location_name: value.location_name ?? value.LocationName ?? "",
-    delivery_charge: value.delivery_charge ?? value.DeliveryCharge,
-  };
-}
 
 type DashboardSummary = {
   today_orders: number;
@@ -1659,6 +1639,114 @@ function ProductForm() {
   );
 }
 
+function LocationAutocomplete({
+  locations,
+  selectedLocationID,
+  onSelectLocation,
+  disabled,
+}: {
+  locations: CourierLocation[];
+  selectedLocationID: string;
+  onSelectLocation: (id: string) => void;
+  disabled?: boolean;
+}) {
+  const [search, setSearch] = useState("");
+  const selected = useMemo(
+    () => locations.find((l) => l.id === selectedLocationID),
+    [locations, selectedLocationID]
+  );
+
+  const filtered = useMemo(() => {
+    if (!search.trim()) return locations.slice(0, 10);
+    return filterCourierLocations(locations, search).slice(0, 20);
+  }, [locations, search]);
+
+  if (disabled) {
+    return (
+      <div className="search-row">
+        <input
+          disabled
+          placeholder="Select a courier first..."
+        />
+      </div>
+    );
+  }
+
+  if (selected) {
+    return (
+      <div className="selected-customer">
+        <div>
+          <strong>{selected.location_name}</strong>
+          {selected.delivery_charge ? (
+            <span>Delivery charge: Rs. {money(selected.delivery_charge)}</span>
+          ) : null}
+        </div>
+        <button
+          type="button"
+          className="button ghost"
+          onClick={() => {
+            onSelectLocation("");
+            setSearch("");
+          }}
+        >
+          Change
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <div className="search-row">
+        <input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search location (e.g. Kathmandu, Pokhara)..."
+        />
+        {search && (
+          <button
+            type="button"
+            className="button ghost"
+            onClick={() => setSearch("")}
+          >
+            Clear
+          </button>
+        )}
+      </div>
+
+      {locations.length > 0 && (
+        <div
+          className="search-results"
+          style={{ maxHeight: "220px", overflowY: "auto" }}
+        >
+          {filtered.length === 0 ? (
+            <p className="muted small" style={{ padding: "8px 0" }}>
+              No matching locations found for "{search}".
+            </p>
+          ) : (
+            filtered.map((loc) => (
+              <button
+                type="button"
+                key={loc.id}
+                className="search-result"
+                onClick={() => {
+                  onSelectLocation(loc.id);
+                  setSearch("");
+                }}
+              >
+                <strong>{loc.location_name}</strong>
+                {loc.delivery_charge ? (
+                  <span>Delivery charge: Rs. {money(loc.delivery_charge)}</span>
+                ) : null}
+              </button>
+            ))
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function CreateOrder() {
   const navigate = useNavigate();
   const role = getRole();
@@ -1676,10 +1764,51 @@ function CreateOrder() {
   const [codAmount, setCodAmount] = useState("");
   const [isStoreVisit, setIsStoreVisit] = useState(false);
 
+  const [couriers, setCouriers] = useState<Courier[]>([]);
+  const [selectedCourierID, setSelectedCourierID] = useState("");
+  const [courierLocations, setCourierLocations] = useState<CourierLocation[]>([]);
+  const [selectedLocationID, setSelectedLocationID] = useState("");
+
   const [loadingProducts, setLoadingProducts] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
+
+  useEffect(() => {
+    async function loadCouriers() {
+      try {
+        const response = await apiFetch("/couriers");
+        if (response.ok) {
+          const data = await response.json();
+          setCouriers(Array.isArray(data) ? data.map(normalizeCourier) : []);
+        }
+      } catch {
+        // Couriers are optional.
+      }
+    }
+    loadCouriers();
+  }, []);
+
+  useEffect(() => {
+    if (!selectedCourierID) {
+      setCourierLocations([]);
+      setSelectedLocationID("");
+      return;
+    }
+    async function loadLocations() {
+      try {
+        const response = await apiFetch(`/couriers/${selectedCourierID}/locations`);
+        if (response.ok) {
+          const data = await response.json();
+          setCourierLocations(Array.isArray(data) ? data.map(normalizeCourierLocation) : []);
+        }
+      } catch {
+        setCourierLocations([]);
+      }
+    }
+    loadLocations();
+    setSelectedLocationID("");
+  }, [selectedCourierID]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -1865,6 +1994,13 @@ function CreateOrder() {
         body.cod_amount = codAmount;
       }
 
+      if (selectedCourierID) {
+        body.courier_id = selectedCourierID;
+      }
+      if (selectedLocationID) {
+        body.location_id = selectedLocationID;
+      }
+
       const response = await apiFetch("/orders", {
         method: "POST",
         body: JSON.stringify(body),
@@ -1887,6 +2023,8 @@ function CreateOrder() {
       setAddress("");
       setCodAmount("");
       setIsStoreVisit(false);
+      setSelectedCourierID("");
+      setSelectedLocationID("");
 
       setTimeout(() => {
         navigate(`/orders/${order.id}`);
@@ -2115,6 +2253,35 @@ function CreateOrder() {
                     <option value="store">Store</option>
                   </select>
                 </label>
+
+                <label>
+                  Courier
+                  <select
+                    value={selectedCourierID}
+                    onChange={(event) =>
+                      setSelectedCourierID(event.target.value)
+                    }
+                  >
+                    <option value="">Select courier (optional)</option>
+                    {couriers.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <div className="wide">
+                  <label style={{ display: "block", marginBottom: "6px" }}>
+                    Courier location
+                  </label>
+                  <LocationAutocomplete
+                    locations={courierLocations}
+                    selectedLocationID={selectedLocationID}
+                    onSelectLocation={setSelectedLocationID}
+                    disabled={!selectedCourierID || courierLocations.length === 0}
+                  />
+                </div>
 
                 {(role === "admin" ||
                   role === "superadmin") && (
@@ -2375,6 +2542,11 @@ function OrderDetail() {
   const [items, setItems] = useState<OrderItem[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [customer, setCustomer] = useState<Customer | null>(null);
+  const [couriers, setCouriers] = useState<Courier[]>([]);
+  const [courierLocations, setCourierLocations] = useState<CourierLocation[]>([]);
+  const [selectedCourierID, setSelectedCourierID] = useState("");
+  const [selectedLocationID, setSelectedLocationID] = useState("");
+  const [savingCourier, setSavingCourier] = useState(false);
   const [newStatus, setNewStatus] = useState("");
   const [followUpAction, setFollowUpAction] = useState("no_answer");
   const [followUpDate, setFollowUpDate] = useState("");
@@ -2384,6 +2556,40 @@ function OrderDetail() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
+
+  useEffect(() => {
+    async function loadCouriers() {
+      try {
+        const response = await apiFetch("/couriers");
+        if (response.ok) {
+          const data = await response.json();
+          setCouriers(Array.isArray(data) ? data.map(normalizeCourier) : []);
+        }
+      } catch {
+        // Couriers optional
+      }
+    }
+    loadCouriers();
+  }, []);
+
+  useEffect(() => {
+    if (!selectedCourierID) {
+      setCourierLocations([]);
+      return;
+    }
+    async function loadLocations() {
+      try {
+        const response = await apiFetch(`/couriers/${selectedCourierID}/locations`);
+        if (response.ok) {
+          const data = await response.json();
+          setCourierLocations(Array.isArray(data) ? data.map(normalizeCourierLocation) : []);
+        }
+      } catch {
+        setCourierLocations([]);
+      }
+    }
+    loadLocations();
+  }, [selectedCourierID]);
 
   async function load() {
     if (!id) return;
@@ -2402,6 +2608,8 @@ function OrderDetail() {
 
       setOrder(orderData);
       setNewStatus(orderData.status);
+      setSelectedCourierID(orderData.courier_id || "");
+      setSelectedLocationID(orderData.location_id || "");
 
       const customerResponse = await apiFetch(
         `/customers/${orderData.customer_id}`
@@ -2465,7 +2673,9 @@ function OrderDetail() {
         throw new Error(await readError(response));
       }
 
-      setOrder(normalizeOrder(await response.json()));
+      const updated = normalizeOrder(await response.json());
+      setOrder(updated);
+      setNewStatus(updated.status);
       setMessage("Order status updated.");
     } catch (err) {
       setError(
@@ -2475,6 +2685,76 @@ function OrderDetail() {
       );
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function updateCourierLocation() {
+    if (!id || !order) return;
+    setSavingCourier(true);
+    setError("");
+    setMessage("");
+
+    try {
+      const response = await apiFetch(`/orders/${id}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          courier_id: selectedCourierID || null,
+          location_id: selectedLocationID || null,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(await readError(response));
+      }
+
+      const updated = normalizeOrder(await response.json());
+      setOrder(updated);
+      setSelectedCourierID(updated.courier_id || "");
+      setSelectedLocationID(updated.location_id || "");
+      setMessage("Courier and location updated.");
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Failed to update courier/location"
+      );
+    } finally {
+      setSavingCourier(false);
+    }
+  }
+
+  async function clearCourierLocation() {
+    if (!id || !order) return;
+    setSavingCourier(true);
+    setError("");
+    setMessage("");
+
+    try {
+      const response = await apiFetch(`/orders/${id}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          courier_id: null,
+          location_id: null,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(await readError(response));
+      }
+
+      const updated = normalizeOrder(await response.json());
+      setOrder(updated);
+      setSelectedCourierID("");
+      setSelectedLocationID("");
+      setMessage("Courier and location unassigned.");
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Failed to clear courier/location"
+      );
+    } finally {
+      setSavingCourier(false);
     }
   }
 
@@ -2501,9 +2781,36 @@ function OrderDetail() {
     }
   }
 
-  const productMap = new Map(
-    products.map((product) => [product.id, product])
+  const productMap = useMemo(
+    () => new Map(products.map((product) => [product.id, product])),
+    [products]
   );
+  const courierMap = useMemo(
+    () => new Map(couriers.map((c) => [c.id, c])),
+    [couriers]
+  );
+  const courierLocationMap = useMemo(
+    () => new Map(courierLocations.map((l) => [l.id, l])),
+    [courierLocations]
+  );
+  const validNextStatuses = useMemo(
+    () => (order ? getValidNextStatuses(order.status) : []),
+    [order?.status]
+  );
+  const isTerminal = validNextStatuses.length === 0;
+
+  const STATUS_LABELS: Record<string, string> = {
+    confirmed: "Confirmed",
+    pickup_complete: "Pickup complete",
+    dispatched: "Dispatched",
+    arrived: "Arrived",
+    delivered: "Delivered",
+    follow_up: "Follow up",
+    hold: "Hold",
+    redirected: "Redirected",
+    cancelled: "Cancelled",
+    returned: "Returned",
+  };
 
   return (
     <Layout>
@@ -2560,6 +2867,87 @@ function OrderDetail() {
                   <span>Address</span>
                   <strong>{order.address}</strong>
                 </div>
+
+                <div>
+                  <span>Courier</span>
+                  <strong>
+                    {courierMap.get(order.courier_id || "")?.name || (order.courier_id ? order.courier_id.slice(0, 8) : "Not assigned")}
+                  </strong>
+                </div>
+
+                <div>
+                  <span>Location</span>
+                  <strong>
+                    {courierLocationMap.get(order.location_id || "")?.location_name || (order.location_id ? order.location_id.slice(0, 8) : "—")}
+                  </strong>
+                </div>
+              </div>
+            </section>
+
+            <section className="card">
+              <div className="section-heading">
+                <div>
+                  <span className="eyebrow">Logistics</span>
+                  <h2>Courier & Destination</h2>
+                </div>
+              </div>
+
+              <div className="form-grid">
+                <label>
+                  Courier
+                  <select
+                    value={selectedCourierID}
+                    onChange={(event) => {
+                      setSelectedCourierID(event.target.value);
+                      setSelectedLocationID("");
+                    }}
+                  >
+                    <option value="">No courier assigned</option>
+                    {couriers.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <div className="wide">
+                  <label style={{ display: "block", marginBottom: "6px" }}>
+                    Courier location
+                  </label>
+                  <LocationAutocomplete
+                    locations={courierLocations}
+                    selectedLocationID={selectedLocationID}
+                    onSelectLocation={setSelectedLocationID}
+                    disabled={!selectedCourierID || courierLocations.length === 0}
+                  />
+                </div>
+              </div>
+
+              <div style={{ marginTop: "1rem", display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                <button
+                  type="button"
+                  className="button secondary"
+                  disabled={
+                    savingCourier ||
+                    (selectedCourierID === (order.courier_id || "") &&
+                      selectedLocationID === (order.location_id || ""))
+                  }
+                  onClick={updateCourierLocation}
+                >
+                  {savingCourier ? "Saving..." : "Save courier & location"}
+                </button>
+
+                {(order.courier_id || order.location_id || selectedCourierID || selectedLocationID) && (
+                  <button
+                    type="button"
+                    className="button ghost"
+                    disabled={savingCourier}
+                    onClick={clearCourierLocation}
+                  >
+                    Clear / Unassign
+                  </button>
+                )}
               </div>
             </section>
 
@@ -2646,19 +3034,16 @@ function OrderDetail() {
                   onChange={(event) =>
                     setNewStatus(event.target.value)
                   }
+                  disabled={isTerminal || saving}
                 >
-                  <option value="confirmed">Confirmed</option>
-                  <option value="pickup_complete">
-                    Pickup complete
+                  <option value={order.status}>
+                    {STATUS_LABELS[order.status] || order.status} (current)
                   </option>
-                  <option value="dispatched">Dispatched</option>
-                  <option value="arrived">Arrived</option>
-                  <option value="delivered">Delivered</option>
-                  <option value="follow_up">Follow up</option>
-                  <option value="hold">Hold</option>
-                  <option value="redirected">Redirected</option>
-                  <option value="cancelled">Cancelled</option>
-                  <option value="returned">Returned</option>
+                  {validNextStatuses.map((st) => (
+                    <option key={st} value={st}>
+                      {STATUS_LABELS[st] || st}
+                    </option>
+                  ))}
                 </select>
               </label>
 
@@ -2666,19 +3051,24 @@ function OrderDetail() {
                 className="button primary full"
                 type="button"
                 disabled={
-                  saving || newStatus === order.status
+                  saving || isTerminal || newStatus === order.status
                 }
                 onClick={updateStatus}
               >
                 {saving ? "Updating..." : "Update status"}
               </button>
 
-              <p className="muted small">
-                The backend validates whether the requested
-                transition is allowed.
-              </p>
+              {isTerminal ? (
+                <p className="muted small">
+                  This order is in a terminal state ({STATUS_LABELS[order.status] || order.status}). No further status transitions are allowed.
+                </p>
+              ) : (
+                <p className="muted small">
+                  Only valid next status transitions are shown.
+                </p>
+              )}
 
-              {role === "staff" && (
+              {role === "staff" && !isTerminal && (
                 <p className="muted small">
                   Staff status changes are subject to the same
                   backend workflow rules.

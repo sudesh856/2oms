@@ -86,8 +86,8 @@ func (q *Queries) CreateLegacyOrder(ctx context.Context, arg CreateLegacyOrderPa
 }
 
 const createOrderForAdmin = `-- name: CreateOrderForAdmin :one
-INSERT INTO orders (customer_id, source, status, address, cod_amount, is_store_visit, created_by, company_id)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+INSERT INTO orders (customer_id, source, status, address, cod_amount, is_store_visit, courier_id, location_id, created_by, company_id)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 RETURNING id, customer_id, source, status, courier_id, location_id, address,
           cod_amount, is_store_visit, created_by, created_at, updated_at, is_legacy
 `
@@ -99,6 +99,8 @@ type CreateOrderForAdminParams struct {
 	Address      string
 	CodAmount    pgtype.Numeric
 	IsStoreVisit bool
+	CourierID    pgtype.UUID
+	LocationID   pgtype.UUID
 	CreatedBy    pgtype.UUID
 	CompanyID    pgtype.UUID
 }
@@ -127,6 +129,8 @@ func (q *Queries) CreateOrderForAdmin(ctx context.Context, arg CreateOrderForAdm
 		arg.Address,
 		arg.CodAmount,
 		arg.IsStoreVisit,
+		arg.CourierID,
+		arg.LocationID,
 		arg.CreatedBy,
 		arg.CompanyID,
 	)
@@ -150,8 +154,8 @@ func (q *Queries) CreateOrderForAdmin(ctx context.Context, arg CreateOrderForAdm
 }
 
 const createOrderForStaff = `-- name: CreateOrderForStaff :one
-INSERT INTO orders (customer_id, source, status, address, is_store_visit, created_by, company_id)
-VALUES ($1, $2, $3, $4, $5, $6, $7)
+INSERT INTO orders (customer_id, source, status, address, is_store_visit, courier_id, location_id, created_by, company_id)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 RETURNING id, customer_id, source, status, courier_id, location_id, address,
           is_store_visit, created_by, created_at, updated_at, is_legacy
 `
@@ -162,6 +166,8 @@ type CreateOrderForStaffParams struct {
 	Status       OrderStatus
 	Address      string
 	IsStoreVisit bool
+	CourierID    pgtype.UUID
+	LocationID   pgtype.UUID
 	CreatedBy    pgtype.UUID
 	CompanyID    pgtype.UUID
 }
@@ -188,6 +194,8 @@ func (q *Queries) CreateOrderForStaff(ctx context.Context, arg CreateOrderForSta
 		arg.Status,
 		arg.Address,
 		arg.IsStoreVisit,
+		arg.CourierID,
+		arg.LocationID,
 		arg.CreatedBy,
 		arg.CompanyID,
 	)
@@ -650,6 +658,65 @@ func (q *Queries) ListOrdersForStaff(ctx context.Context, arg ListOrdersForStaff
 		return nil, err
 	}
 	return items, nil
+}
+
+const updateOrderCourierAndLocation = `-- name: UpdateOrderCourierAndLocation :one
+UPDATE orders
+SET courier_id = $2,
+    location_id = $3,
+    updated_at = NOW()
+WHERE id = $1 AND company_id = $4
+RETURNING id, customer_id, source, status, courier_id, location_id, address,
+          cod_amount, is_store_visit, created_by, created_at, updated_at, is_legacy
+`
+
+type UpdateOrderCourierAndLocationParams struct {
+	ID         pgtype.UUID
+	CourierID  pgtype.UUID
+	LocationID pgtype.UUID
+	CompanyID  pgtype.UUID
+}
+
+type UpdateOrderCourierAndLocationRow struct {
+	ID           pgtype.UUID
+	CustomerID   pgtype.UUID
+	Source       OrderSource
+	Status       OrderStatus
+	CourierID    pgtype.UUID
+	LocationID   pgtype.UUID
+	Address      string
+	CodAmount    pgtype.Numeric
+	IsStoreVisit bool
+	CreatedBy    pgtype.UUID
+	CreatedAt    pgtype.Timestamptz
+	UpdatedAt    pgtype.Timestamptz
+	IsLegacy     bool
+}
+
+func (q *Queries) UpdateOrderCourierAndLocation(ctx context.Context, arg UpdateOrderCourierAndLocationParams) (UpdateOrderCourierAndLocationRow, error) {
+	row := q.db.QueryRow(ctx, updateOrderCourierAndLocation,
+		arg.ID,
+		arg.CourierID,
+		arg.LocationID,
+		arg.CompanyID,
+	)
+	var i UpdateOrderCourierAndLocationRow
+	err := row.Scan(
+		&i.ID,
+		&i.CustomerID,
+		&i.Source,
+		&i.Status,
+		&i.CourierID,
+		&i.LocationID,
+		&i.Address,
+		&i.CodAmount,
+		&i.IsStoreVisit,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.IsLegacy,
+	)
+	return i, err
 }
 
 const updateOrderStatus = `-- name: UpdateOrderStatus :one

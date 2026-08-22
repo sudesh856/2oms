@@ -135,4 +135,78 @@ export function normalizeOrderItem(value: Partial<OrderItem> & {
     quantity: Number(value.quantity ?? value.Quantity ?? 0),
     price: value.price ?? value.Price,
   };
-}
+}
+
+export type Courier = {
+  id: string;
+  name: string;
+  created_at?: string;
+};
+
+export function normalizeCourier(value: Partial<Courier> & {
+  ID?: string;
+  Name?: string;
+  CreatedAt?: string;
+}): Courier {
+  return {
+    id: value.id ?? value.ID ?? "",
+    name: value.name ?? value.Name ?? "",
+    created_at: value.created_at ?? value.CreatedAt,
+  };
+}
+
+export type CourierLocation = {
+  id: string;
+  courier_id: string;
+  location_name: string;
+  delivery_charge: unknown;
+  created_at?: string;
+};
+
+export function normalizeCourierLocation(value: Partial<CourierLocation> & {
+  ID?: string;
+  CourierID?: string;
+  LocationName?: string;
+  DeliveryCharge?: unknown;
+  CreatedAt?: string;
+}): CourierLocation {
+  return {
+    id: value.id ?? value.ID ?? "",
+    courier_id: value.courier_id ?? value.CourierID ?? "",
+    location_name: value.location_name ?? value.LocationName ?? "",
+    delivery_charge: value.delivery_charge ?? value.DeliveryCharge,
+    created_at: value.created_at ?? value.CreatedAt,
+  };
+}
+
+export const VALID_NEXT_STATUSES: Record<string, string[]> = {
+  confirmed: ["pickup_complete", "follow_up", "hold", "cancelled"],
+  pickup_complete: ["dispatched", "follow_up", "hold", "redirected", "cancelled"],
+  dispatched: ["arrived", "follow_up", "hold", "redirected", "cancelled", "returned"],
+  arrived: ["delivered", "follow_up", "hold", "redirected", "cancelled", "returned"],
+  follow_up: ["confirmed", "pickup_complete", "hold", "cancelled"],
+  hold: ["confirmed", "pickup_complete", "cancelled"],
+  redirected: ["dispatched", "arrived", "cancelled"],
+  delivered: [],
+  cancelled: [],
+  returned: [],
+};
+
+export function getValidNextStatuses(currentStatus?: string): string[] {
+  if (!currentStatus) return [];
+  return VALID_NEXT_STATUSES[currentStatus] || [];
+}
+
+export function filterCourierLocations(
+  locations: CourierLocation[],
+  query: string
+): CourierLocation[] {
+  const trimmed = query.trim().toLowerCase();
+  if (!trimmed) {
+    return locations;
+  }
+  return locations.filter((loc) =>
+    loc.location_name.toLowerCase().includes(trimmed)
+  );
+}
+

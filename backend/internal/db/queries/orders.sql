@@ -68,16 +68,25 @@ SELECT o.id, o.customer_id, o.source, o.status, o.courier_id, o.location_id,
 FROM orders o WHERE o.customer_id = $1 AND o.company_id = $2 ORDER BY o.created_at DESC;
 
 -- name: CreateOrderForAdmin :one
-INSERT INTO orders (customer_id, source, status, address, cod_amount, is_store_visit, created_by, company_id)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+INSERT INTO orders (customer_id, source, status, address, cod_amount, is_store_visit, courier_id, location_id, created_by, company_id)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 RETURNING id, customer_id, source, status, courier_id, location_id, address,
           cod_amount, is_store_visit, created_by, created_at, updated_at, is_legacy;
 
 -- name: CreateOrderForStaff :one
-INSERT INTO orders (customer_id, source, status, address, is_store_visit, created_by, company_id)
-VALUES ($1, $2, $3, $4, $5, $6, $7)
+INSERT INTO orders (customer_id, source, status, address, is_store_visit, courier_id, location_id, created_by, company_id)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 RETURNING id, customer_id, source, status, courier_id, location_id, address,
           is_store_visit, created_by, created_at, updated_at, is_legacy;
+
+-- name: UpdateOrderCourierAndLocation :one
+UPDATE orders
+SET courier_id = $2,
+    location_id = $3,
+    updated_at = NOW()
+WHERE id = $1 AND company_id = $4
+RETURNING id, customer_id, source, status, courier_id, location_id, address,
+          cod_amount, is_store_visit, created_by, created_at, updated_at, is_legacy;
 
 -- name: CreateLegacyOrder :one
 INSERT INTO orders (customer_id, source, status, address, cod_amount, is_store_visit,
@@ -86,3 +95,4 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, TRUE, $11, $12)
 ON CONFLICT (company_id, legacy_source_key) WHERE legacy_source_key IS NOT NULL DO NOTHING
 RETURNING id, customer_id, source, status, courier_id, location_id, address,
           cod_amount, is_store_visit, created_by, created_at, updated_at, is_legacy;
+

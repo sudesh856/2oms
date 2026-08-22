@@ -658,6 +658,8 @@ type createOrderRequest struct {
 	Address      string                   `json:"address"`
 	CodAmount    string                   `json:"cod_amount"`
 	IsStoreVisit bool                     `json:"is_store_visit"`
+	CourierID    *string                  `json:"courier_id"`
+	LocationID   *string                  `json:"location_id"`
 	Items        []createOrderItemRequest `json:"items"`
 }
 
@@ -666,6 +668,8 @@ type createStaffOrderRequest struct {
 	Source       string                   `json:"source"`
 	Address      string                   `json:"address"`
 	IsStoreVisit bool                     `json:"is_store_visit"`
+	CourierID    *string                  `json:"courier_id"`
+	LocationID   *string                  `json:"location_id"`
 	Items        []createOrderItemRequest `json:"items"`
 }
 
@@ -702,6 +706,8 @@ func (h *Handler) CreateOrder(w http.ResponseWriter, r *http.Request) {
 			Source:       staffReq.Source,
 			Address:      staffReq.Address,
 			IsStoreVisit: staffReq.IsStoreVisit,
+			CourierID:    staffReq.CourierID,
+			LocationID:   staffReq.LocationID,
 			Items:        staffReq.Items,
 		}
 	} else if claims.Role == "admin" || claims.Role == "superadmin" {
@@ -718,6 +724,26 @@ func (h *Handler) CreateOrder(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		api.WriteError(w, http.StatusBadRequest, "INVALID_CUSTOMER_ID", "invalid customer id")
 		return
+	}
+
+	var courierID pgtype.UUID
+	if req.CourierID != nil && strings.TrimSpace(*req.CourierID) != "" {
+		parsed, err := uuid.Parse(strings.TrimSpace(*req.CourierID))
+		if err != nil {
+			api.WriteError(w, http.StatusBadRequest, "INVALID_COURIER_ID", "invalid courier id")
+			return
+		}
+		courierID = pgtype.UUID{Bytes: parsed, Valid: true}
+	}
+
+	var locationID pgtype.UUID
+	if req.LocationID != nil && strings.TrimSpace(*req.LocationID) != "" {
+		parsed, err := uuid.Parse(strings.TrimSpace(*req.LocationID))
+		if err != nil {
+			api.WriteError(w, http.StatusBadRequest, "INVALID_LOCATION_ID", "invalid location id")
+			return
+		}
+		locationID = pgtype.UUID{Bytes: parsed, Valid: true}
 	}
 
 	var codAmount pgtype.Numeric
@@ -769,6 +795,8 @@ func (h *Handler) CreateOrder(w http.ResponseWriter, r *http.Request) {
 			Address:      req.Address,
 			CodAmount:    codAmount,
 			IsStoreVisit: req.IsStoreVisit,
+			CourierID:    courierID,
+			LocationID:   locationID,
 			CreatedBy:    createdBy,
 			CompanyID:    uuid.UUID(companyID.Bytes),
 			Items:        items,
@@ -787,3 +815,79 @@ func (h *Handler) CreateOrder(w http.ResponseWriter, r *http.Request) {
 
 	writeCreatedOrderJSON(w, order, warnings, claims.Role == "staff")
 }
+
+type updateOrderRequest struct {
+	CourierID  *string `json:"courier_id"`
+	LocationID *string `json:"location_id"`
+}
+
+func (h *Handler) UpdateOrder(w http.ResponseWriter, r *http.Request) {
+	claims, ok := auth.GetClaims(r.Context())
+	if !ok {
+		api.WriteError(w, http.StatusUnauthorized, "UNAUTHORIZED", "unauthorized")
+		return
+	}
+	companyID, companyOK := auth.GetCompanyID(r.Context())
+	if !companyOK {
+		api.WriteError(w, http.StatusUnauthorized, "UNAUTHORIZED", "unauthorized")
+		return
+	}
+
+	orderID, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		api.WriteError(w, http.StatusBadRequest, "INVALID_ORDER_ID", "invalid order id")
+		return
+	}
+
+	orderIDPG := pgtype.UUID{
+		Bytes: orderID,
+		Valid: true,
+	}
+
+	var req updateOrderRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		api.WriteError(w, http.StatusBadRequest, "INVALID_REQUEST", "invalid request")
+		return
+	}
+
+	var courierID pgtype.UUID
+	if req.CourierID != nil && strings.TrimSpace(*req.CourierID) != "" {
+		parsed, err := uuid.Parse(strings.TrimSpace(*req.CourierID))
+		if err != nil {
+			api.WriteError(w, http.StatusBadRequest, "INVALID_COURIER_ID", "invalid courier id")
+			return
+		}
+		courierID = pgtype.UUID{Bytes: parsed, Valid: true}
+	}
+
+	var locationID pgtype.UUID
+	if req.LocationID != nil && strings.TrimSpace(*req.LocationID) != "" {
+		parsed, err := uuid.Parse(strings.TrimSpace(*req.LocationID))
+		if err != nil {
+			api.WriteError(w, http.StatusBadRequest, "INVALID_LOCATION_ID", "invalid location id")
+			return
+		}
+		locationID = pgtype.UUID{Bytes: parsed, Valid: true}
+	}
+
+	order, err := h.Queries.UpdateOrderCourierAndLocation(
+		r.Context(),
+		db.UpdateOrderCourierAndLocationParams{
+			ID:         orderIDPG,
+			CourierID:  courierID,
+			LocationID: locationID,
+			CompanyID:  companyID,
+		},
+	)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			api.WriteError(w, http.StatusNotFound, "ORDER_NOT_FOUND", "order not found")
+			return
+		}
+		api.WriteError(w, http.StatusInternalServerError, "ORDER_UPDATE_FAILED", "failed to update order")
+		return
+	}
+
+	writeOrderJSON(w, order, claims.Role == "staff", http.StatusOK)
+}
+
