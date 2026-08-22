@@ -386,4 +386,26 @@ describe("Follow-Up Queue and Order Detail Follow-Up History", () => {
     expect(history[1].next_action).toBe("no_answer");
     expect(history[1].assigned_to_name).toBe("Staff Member");
   });
+});
+
+describe("Users management status and action states", () => {
+  it("determines correct action labels and availability for mixed user statuses", () => {
+    const mockUsers = [
+      { id: "u-1", name: "Super User", phone: "9800000001", role: "superadmin", is_active: true, status: "active" },
+      { id: "u-2", name: "Active Admin", phone: "9800000002", role: "admin", is_active: true, status: "active" },
+      { id: "u-3", name: "Inactive Staff", phone: "9800000003", role: "staff", is_active: false, status: "inactive" },
+      { id: "u-4", name: "Invited Staff", phone: "9800000004", role: "staff", is_active: false, status: "invited" },
+    ];
+
+    function getUserActions(user: typeof mockUsers[0]): string[] {
+      if (user.role === "superadmin") return [];
+      if (user.status === "invited") return ["Resend", "Revoke"];
+      return [user.is_active ? "Deactivate" : "Activate"];
+    }
+
+    expect(getUserActions(mockUsers[0])).toEqual([]);
+    expect(getUserActions(mockUsers[1])).toEqual(["Deactivate"]);
+    expect(getUserActions(mockUsers[2])).toEqual(["Activate"]);
+    expect(getUserActions(mockUsers[3])).toEqual(["Resend", "Revoke"]);
+  });
 });

@@ -3355,7 +3355,7 @@ function Users() {
       {error && <div className="alert error">{error}</div>}
       {message && <div className="alert success">{message}</div>}
 
-      <div className="detail-grid">
+      <div className="users-layout">
         <section className="card form-card">
           <div className="section-heading">
             <div>
@@ -3394,50 +3394,112 @@ function Users() {
         </section>
 
         <section className="card table-card">
-          <div className="section-heading">
+          <div className="section-heading" style={{ padding: "20px 20px 0" }}>
             <div>
               <span className="eyebrow">Accounts</span>
               <h2>Internal users</h2>
             </div>
           </div>
           {loading ? (
-            <p className="muted">Loading users...</p>
+            <p className="muted" style={{ padding: "20px" }}>Loading users...</p>
           ) : users.length === 0 ? (
             <EmptyState message="No users found." />
           ) : (
-            <div className="table-wrap">
-              <table>
-                <thead>
-                  <tr><th>Name</th><th>Phone</th><th>Role</th><th>Status</th><th /></tr>
-                </thead>
-                <tbody>
-                  {users.map((user) => (
-                    <tr key={user.id}>
-                      <td><strong>{user.name}</strong></td>
-                      <td>{user.phone}</td>
-                      <td>{user.role}</td>
-                      <td>{user.status || (user.is_active ? "Active" : "Inactive")}</td>
-                      <td>
-                        {user.role !== "superadmin" && (
-                          <div className="user-actions">
-                            {user.status === "invited" ? (
-                              <>
-                                <button className="button ghost" type="button" disabled={saving} onClick={() => resendInvitation(user.id)}>Resend invitation</button>
-                                <button className="button ghost" type="button" disabled={saving} onClick={() => revokeInvitation(user.id)}>Revoke invitation</button>
-                              </>
-                            ) : (
-                              <button className="button ghost" type="button" disabled={saving} onClick={() => updateUser(user.id, { is_active: !user.is_active }, user.is_active ? "User deactivated." : "User activated.")}>
-                                {user.is_active ? "Deactivate" : "Activate"}
-                              </button>
-                            )}
-                          </div>
-                        )}
-                      </td>
+            <>
+              <div className="table-wrap desktop-only-table">
+                <table className="users-table">
+                  <thead>
+                    <tr>
+                      <th>Name</th>
+                      <th>Phone</th>
+                      <th>Role</th>
+                      <th>Status</th>
+                      <th style={{ textAlign: "right" }}>Actions</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                  </thead>
+                  <tbody>
+                    {users.map((user) => {
+                      const isInvited = user.status === "invited";
+                      const isActive = !isInvited && user.is_active !== false && user.status !== "inactive";
+                      return (
+                        <tr key={user.id}>
+                          <td><strong>{user.name}</strong></td>
+                          <td>{user.phone}</td>
+                          <td><span style={{ textTransform: "capitalize" }}>{user.role}</span></td>
+                          <td>
+                            {isInvited ? (
+                              <span className="status status-amber">Invited</span>
+                            ) : isActive ? (
+                              <span className="status status-green">Active</span>
+                            ) : (
+                              <span className="status status-red">Inactive</span>
+                            )}
+                          </td>
+                          <td>
+                            {user.role !== "superadmin" && (
+                              <div className="user-actions">
+                                {isInvited ? (
+                                  <>
+                                    <button className="button ghost" type="button" disabled={saving} onClick={() => resendInvitation(user.id)}>Resend</button>
+                                    <button className="button ghost" type="button" disabled={saving} onClick={() => revokeInvitation(user.id)}>Revoke</button>
+                                  </>
+                                ) : (
+                                  <button className="button ghost" type="button" disabled={saving} onClick={() => updateUser(user.id, { is_active: !user.is_active }, user.is_active ? "User deactivated." : "User activated.")}>
+                                    {user.is_active ? "Deactivate" : "Activate"}
+                                  </button>
+                                )}
+                              </div>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="mobile-only-users user-card-list">
+                {users.map((user) => {
+                  const isInvited = user.status === "invited";
+                  const isActive = !isInvited && user.is_active !== false && user.status !== "inactive";
+                  return (
+                    <div key={user.id} className="user-card-item">
+                      <div className="user-card-header">
+                        <div>
+                          <strong>{user.name}</strong>
+                          <div style={{ fontSize: "13px", color: "var(--text-soft)" }}>{user.phone}</div>
+                        </div>
+                        <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
+                          <span style={{ textTransform: "capitalize", fontSize: "12px", color: "var(--text-soft)" }}>{user.role}</span>
+                          {isInvited ? (
+                            <span className="status status-amber">Invited</span>
+                          ) : isActive ? (
+                            <span className="status status-green">Active</span>
+                          ) : (
+                            <span className="status status-red">Inactive</span>
+                          )}
+                        </div>
+                      </div>
+
+                      {user.role !== "superadmin" && (
+                        <div className="user-card-actions">
+                          {isInvited ? (
+                            <>
+                              <button className="button ghost" style={{ flex: 1 }} type="button" disabled={saving} onClick={() => resendInvitation(user.id)}>Resend</button>
+                              <button className="button ghost" style={{ flex: 1 }} type="button" disabled={saving} onClick={() => revokeInvitation(user.id)}>Revoke</button>
+                            </>
+                          ) : (
+                            <button className="button ghost" style={{ flex: 1 }} type="button" disabled={saving} onClick={() => updateUser(user.id, { is_active: !user.is_active }, user.is_active ? "User deactivated." : "User activated.")}>
+                              {user.is_active ? "Deactivate" : "Activate"}
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </>
           )}
         </section>
       </div>
