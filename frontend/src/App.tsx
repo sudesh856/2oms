@@ -21,6 +21,7 @@ import {
   normalizeOrderItem,
   normalizeProduct,
   normalizeFollowUp,
+  normalizeStatusCount,
   type CartItem,
   type Courier,
   type CourierLocation,
@@ -29,6 +30,7 @@ import {
   type Order,
   type OrderItem,
   type Product,
+  type StatusCount,
 } from "./orderHelpers";
 const API = import.meta.env.VITE_API_BASE_URL || "http://localhost:8080/api";
 
@@ -51,7 +53,15 @@ type DashboardSummary = {
   confirmed_orders: number;
   cancelled_orders: number;
   delivered_orders: number;
-  status_counts: Array<{ status: string; count: number }>;
+  status_counts: Array<
+    | StatusCount
+    | {
+        status?: string;
+        Status?: string;
+        count?: number;
+        Count?: number;
+      }
+  >;
   courier_counts: Array<{ CourierName?: string | null; Count: number }>;
   follow_ups_due: Array<{
     ID: string;
@@ -714,7 +724,15 @@ function Dashboard() {
               <Link to="/orders/problems" className="text-link">Problem orders</Link>
             </div>
             <div className="compact-list">
-              {(summary?.status_counts ?? []).map((item) => <div className="compact-row" key={item.status}><StatusBadge status={item.status} /><strong>{item.count}</strong></div>)}
+              {(summary?.status_counts ?? []).map((rawItem, idx) => {
+                const item = normalizeStatusCount(rawItem);
+                return (
+                  <div className="compact-row" key={item.status || idx}>
+                    <StatusBadge status={item.status} />
+                    <strong>{item.count}</strong>
+                  </div>
+                );
+              })}
             </div>
           </section>
 

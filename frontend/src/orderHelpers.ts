@@ -286,4 +286,25 @@ export function filterCourierLocations(
     loc.location_name.toLowerCase().includes(trimmed)
   );
 }
+
+export type StatusCount = {
+  status: string;
+  count: number;
+};
+
+export function normalizeStatusCount(value?: (Partial<StatusCount> & {
+  Status?: string;
+  Count?: number;
+}) | null): StatusCount {
+  const v = value ?? {};
+  return {
+    status: v.status ?? v.Status ?? "",
+    count: Number(v.count ?? v.Count ?? 0),
+  };
+}
+
+export function statusLabel(status?: string): string {
+  return (status ?? "unknown").replaceAll("_", " ");
+}
+
 

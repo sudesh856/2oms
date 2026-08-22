@@ -10,6 +10,8 @@ import {
   normalizeOrderItem,
   normalizeProduct,
   normalizeFollowUp,
+  normalizeStatusCount,
+  statusLabel,
   type CourierLocation,
 } from "./orderHelpers";
 
@@ -407,5 +409,96 @@ describe("Users management status and action states", () => {
     expect(getUserActions(mockUsers[1])).toEqual(["Deactivate"]);
     expect(getUserActions(mockUsers[2])).toEqual(["Activate"]);
     expect(getUserActions(mockUsers[3])).toEqual(["Resend", "Revoke"]);
+  });
+});
+
+describe("Dashboard status counts and status labeling", () => {
+  it("normalizes backend PascalCase status count objects", () => {
+    const rawItem = { Status: "confirmed", Count: 5 };
+    const normalized = normalizeStatusCount(rawItem);
+
+    expect(normalized).toEqual({
+      status: "confirmed",
+      count: 5,
+    });
+    expect(statusLabel(normalized.status)).toBe("confirmed");
+  });
+
+  it("normalizes lowercase status count objects", () => {
+    const rawItem = { status: "pickup_complete", count: 2 };
+    const normalized = normalizeStatusCount(rawItem);
+
+    expect(normalized).toEqual({
+      status: "pickup_complete",
+      count: 2,
+    });
+    expect(statusLabel(normalized.status)).toBe("pickup complete");
+  });
+
+  it("correctly labels all 10 real order statuses without showing unknown", () => {
+    const realStatuses = [
+      "confirmed",
+      "pickup_complete",
+      "dispatched",
+      "arrived",
+      "delivered",
+      "follow_up",
+      "hold",
+      "redirected",
+      "cancelled",
+      "returned",
+    ];
+
+    const expectedLabels = [
+      "confirmed",
+      "pickup complete",
+      "dispatched",
+      "arrived",
+      "delivered",
+      "follow up",
+      "hold",
+      "redirected",
+      "cancelled",
+      "returned",
+    ];
+
+    realStatuses.forEach((status, idx) => {
+      expect(statusLabel(status)).toBe(expectedLabels[idx]);
+      expect(statusLabel(status)).not.toBe("unknown");
+    });
+  });
+
+  it("processes a realistic dashboard status_counts array with multiple real statuses", () => {
+    const rawBackendStatusCounts = [
+      { Status: "confirmed", Count: 12 },
+      { Status: "pickup_complete", Count: 4 },
+      { Status: "dispatched", Count: 7 },
+      { Status: "arrived", Count: 3 },
+      { Status: "delivered", Count: 25 },
+      { Status: "follow_up", Count: 6 },
+      { Status: "hold", Count: 2 },
+      { Status: "redirected", Count: 1 },
+      { Status: "cancelled", Count: 5 },
+      { Status: "returned", Count: 2 },
+    ];
+
+    const processed = rawBackendStatusCounts.map(normalizeStatusCount).map((item) => ({
+      rawStatus: item.status,
+      displayLabel: statusLabel(item.status),
+      count: item.count,
+    }));
+
+    expect(processed).toEqual([
+      { rawStatus: "confirmed", displayLabel: "confirmed", count: 12 },
+      { rawStatus: "pickup_complete", displayLabel: "pickup complete", count: 4 },
+      { rawStatus: "dispatched", displayLabel: "dispatched", count: 7 },
+      { rawStatus: "arrived", displayLabel: "arrived", count: 3 },
+      { rawStatus: "delivered", displayLabel: "delivered", count: 25 },
+      { rawStatus: "follow_up", displayLabel: "follow up", count: 6 },
+      { rawStatus: "hold", displayLabel: "hold", count: 2 },
+      { rawStatus: "redirected", displayLabel: "redirected", count: 1 },
+      { rawStatus: "cancelled", displayLabel: "cancelled", count: 5 },
+      { rawStatus: "returned", displayLabel: "returned", count: 2 },
+    ]);
   });
 });
