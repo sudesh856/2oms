@@ -26,6 +26,9 @@ type dashboardResponse struct {
 	PendingConfirmations int32                              `json:"pending_confirmations"`
 	ProblemOrders        int32                              `json:"problem_orders"`
 	TotalOrders          int32                              `json:"total_orders"`
+	ConfirmedOrders      int32                              `json:"confirmed_orders"`
+	CancelledOrders      int32                              `json:"cancelled_orders"`
+	DeliveredOrders      int32                              `json:"delivered_orders"`
 	StatusCounts         []db.ListDashboardStatusCountsRow  `json:"status_counts"`
 	CourierCounts        []db.ListDashboardCourierCountsRow `json:"courier_counts"`
 	FollowUpsDue         []db.ListDashboardFollowUpsDueRow  `json:"follow_ups_due"`
@@ -69,7 +72,41 @@ func (h *Handler) Summary(w http.ResponseWriter, r *http.Request) {
 	if followUps == nil {
 		followUps = []db.ListDashboardFollowUpsDueRow{}
 	}
-	writeJSON(w, http.StatusOK, dashboardResponse{counts.TodayOrders, counts.PendingConfirmations, counts.ProblemOrders, counts.TotalOrders, statusCounts, courierCounts, followUps})
+	writeJSON(w, http.StatusOK, dashboardResponse{counts.TodayOrders, counts.PendingConfirmations, counts.ProblemOrders, counts.TotalOrders, counts.ConfirmedOrders, counts.CancelledOrders, counts.DeliveredOrders, statusCounts, courierCounts, followUps})
+}
+
+func (h *Handler) StaffPerformance(w http.ResponseWriter, r *http.Request) {
+	companyID, ok := auth.GetCompanyID(r.Context())
+	if !ok {
+		api.WriteError(w, http.StatusUnauthorized, "UNAUTHORIZED", "unauthorized")
+		return
+	}
+	items, err := h.Queries.ListStaffPerformance(r.Context(), companyID)
+	if err != nil {
+		api.WriteError(w, http.StatusInternalServerError, "STAFF_PERFORMANCE_FAILED", "failed to load staff performance")
+		return
+	}
+	if items == nil {
+		items = []db.ListStaffPerformanceRow{}
+	}
+	writeJSON(w, http.StatusOK, items)
+}
+
+func (h *Handler) ConfirmedCourierCounts(w http.ResponseWriter, r *http.Request) {
+	companyID, ok := auth.GetCompanyID(r.Context())
+	if !ok {
+		api.WriteError(w, http.StatusUnauthorized, "UNAUTHORIZED", "unauthorized")
+		return
+	}
+	items, err := h.Queries.ListConfirmedCourierLocationCounts(r.Context(), companyID)
+	if err != nil {
+		api.WriteError(w, http.StatusInternalServerError, "COURIER_REPORT_FAILED", "failed to load confirmed courier counts")
+		return
+	}
+	if items == nil {
+		items = []db.ListConfirmedCourierLocationCountsRow{}
+	}
+	writeJSON(w, http.StatusOK, items)
 }
 
 func (h *Handler) CustomerHistory(w http.ResponseWriter, r *http.Request) {

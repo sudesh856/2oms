@@ -24,16 +24,18 @@ import (
 )
 
 type tenantFixture struct {
-	companyID  uuid.UUID
-	userID     uuid.UUID
-	customerID uuid.UUID
-	productID  uuid.UUID
-	courierID  uuid.UUID
-	locationID uuid.UUID
-	orderID    uuid.UUID
-	otherOrder uuid.UUID
-	phone      string
-	name       string
+	companyID   uuid.UUID
+	userID      uuid.UUID
+	customerID  uuid.UUID
+	productID   uuid.UUID
+	courierID   uuid.UUID
+	locationID  uuid.UUID
+	orderID     uuid.UUID
+	otherOrder  uuid.UUID
+	phone       string
+	name        string
+	staffName   string
+	courierName string
 }
 
 func TestTenantIsolationAcrossRegisteredResources(t *testing.T) {
@@ -82,7 +84,7 @@ func TestTenantIsolationAcrossRegisteredResources(t *testing.T) {
 				"/api/customers", "/api/customers/search?phone=" + pair.own.phone,
 				"/api/products", "/api/couriers", "/api/couriers/" + pair.own.courierID.String() + "/locations",
 				"/api/orders", "/api/followups", "/api/dashboard/summary", "/api/users",
-				"/api/reports/orders.csv",
+				"/api/reports/orders.csv", "/api/reports/staff-performance", "/api/reports/confirmed-courier-wise",
 			}
 			for _, path := range ownPaths {
 				status, body := tenantRequest(router, token, http.MethodGet, path, "")
@@ -92,6 +94,18 @@ func TestTenantIsolationAcrossRegisteredResources(t *testing.T) {
 				if strings.Contains(body, pair.other.name) || strings.Contains(body, pair.other.phone) {
 					t.Errorf("own GET %s leaked other company data: %s", path, body)
 				}
+			}
+			status, body := tenantRequest(router, token, http.MethodGet, "/api/dashboard/summary", "")
+			if status != http.StatusOK || !strings.Contains(body, `"confirmed_orders":1`) {
+				t.Errorf("own dashboard did not report its confirmed order: %d %s", status, body)
+			}
+			status, body = tenantRequest(router, token, http.MethodGet, "/api/reports/staff-performance", "")
+			if status != http.StatusOK || !strings.Contains(body, pair.own.staffName) || strings.Contains(body, pair.other.staffName) {
+				t.Errorf("staff report crossed tenant boundary: %d %s", status, body)
+			}
+			status, body = tenantRequest(router, token, http.MethodGet, "/api/reports/confirmed-courier-wise", "")
+			if status != http.StatusOK || !strings.Contains(body, pair.own.courierName) || strings.Contains(body, pair.other.courierName) {
+				t.Errorf("courier report crossed tenant boundary: %d %s", status, body)
 			}
 
 			objectPaths := []string{
@@ -122,7 +136,7 @@ func TestTenantIsolationAcrossRegisteredResources(t *testing.T) {
 				}
 			}
 
-			status, body := tenantRequest(router, token, http.MethodPatch, "/api/products/"+pair.other.productID.String(), `{"name":"cross-company","price":"1","available_qty":1,"warehouse_qty":1}`)
+			status, body = tenantRequest(router, token, http.MethodPatch, "/api/products/"+pair.other.productID.String(), `{"name":"cross-company","price":"1","available_qty":1,"warehouse_qty":1}`)
 			if status == http.StatusOK || strings.Contains(body, pair.other.name) {
 				t.Errorf("cross-company product update succeeded: %d %s", status, body)
 			}
@@ -165,6 +179,7 @@ func createTenantFixture(ctx context.Context, pool *pgxpool.Pool, suffix string)
 		companyID: uuid.New(), userID: uuid.New(), customerID: uuid.New(), productID: uuid.New(),
 		courierID: uuid.New(), locationID: uuid.New(), orderID: uuid.New(), otherOrder: uuid.New(),
 		phone: "9" + strings.ReplaceAll(uuid.NewString(), "-", "")[:9], name: "tenant-" + suffix + "-customer",
+		staffName: "tenant-" + suffix + "-user", courierName: "tenant-" + suffix + "-courier",
 	}
 	hash, err := auth.HashPassword("TenantPass123!")
 	if err != nil {
@@ -175,10 +190,10 @@ func createTenantFixture(ctx context.Context, pool *pgxpool.Pool, suffix string)
 		args  []any
 	}{
 		{"INSERT INTO companies (id, name) VALUES ($1, $2)", []any{fixture.companyID, "tenant-" + suffix + "-" + uuid.NewString()}},
-		{"INSERT INTO users (id, company_id, name, phone, password_hash, role) VALUES ($1, $2, $3, $4, $5, 'superadmin')", []any{fixture.userID, fixture.companyID, "tenant-" + suffix + "-user", fixture.phone, hash}},
+		{"INSERT INTO users (id, company_id, name, phone, password_hash, role) VALUES ($1, $2, $3, $4, $5, 'superadmin')", []any{fixture.userID, fixture.companyID, fixture.staffName, fixture.phone, hash}},
 		{"INSERT INTO customers (id, company_id, phone, name) VALUES ($1, $2, $3, $4)", []any{fixture.customerID, fixture.companyID, fixture.phone, fixture.name}},
 		{"INSERT INTO products (id, company_id, name, price, available_qty, warehouse_qty) VALUES ($1, $2, $3, 100, 10, 10)", []any{fixture.productID, fixture.companyID, "tenant-" + suffix + "-product"}},
-		{"INSERT INTO couriers (id, company_id, name) VALUES ($1, $2, $3)", []any{fixture.courierID, fixture.companyID, "tenant-" + suffix + "-courier"}},
+		{"INSERT INTO couriers (id, company_id, name) VALUES ($1, $2, $3)", []any{fixture.courierID, fixture.companyID, fixture.courierName}},
 		{"INSERT INTO courier_locations (id, company_id, courier_id, location_name, delivery_charge) VALUES ($1, $2, $3, $4, 10)", []any{fixture.locationID, fixture.companyID, fixture.courierID, "tenant-" + suffix + "-location"}},
 		{"INSERT INTO orders (id, company_id, customer_id, source, status, courier_id, location_id, address, cod_amount, created_by, is_legacy) VALUES ($1, $2, $3, 'phone', 'confirmed', $4, $5, 'address', 100, $6, TRUE)", []any{fixture.orderID, fixture.companyID, fixture.customerID, fixture.courierID, fixture.locationID, fixture.userID}},
 		{"INSERT INTO order_items (company_id, order_id, product_id, quantity, price) VALUES ($1, $2, $3, 1, 100)", []any{fixture.companyID, fixture.orderID, fixture.productID}},

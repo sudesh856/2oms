@@ -9,6 +9,7 @@ import {
   useNavigate,
   useParams,
 } from "react-router-dom";
+import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from "recharts";
 
 const API = import.meta.env.VITE_API_BASE_URL || "http://localhost:8080/api";
 
@@ -142,6 +143,9 @@ type DashboardSummary = {
   pending_confirmations: number;
   problem_orders: number;
   total_orders: number;
+  confirmed_orders: number;
+  cancelled_orders: number;
+  delivered_orders: number;
   status_counts: Array<{ status: string; count: number }>;
   courier_counts: Array<{ CourierName?: string | null; Count: number }>;
   follow_ups_due: Array<{
@@ -153,6 +157,23 @@ type DashboardSummary = {
     CustomerName: string;
     CustomerPhone: string;
   }>;
+};
+
+type StaffPerformance = {
+  UserID: string;
+  Name: string;
+  Role: Role;
+  CallsMade: number;
+  OrdersConfirmed: number;
+  OrdersCancelled: number;
+  FollowUpsLogged: number;
+};
+
+type ConfirmedCourierCount = {
+  CourierName: string;
+  LocationName?: string | null;
+  OrderCount: number;
+  ProductCount: number;
 };
 
 type CartItem = {
@@ -676,7 +697,11 @@ function Dashboard() {
   const [orders, setOrders] = useState<Order[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
+  const [staffPerformance, setStaffPerformance] = useState<StaffPerformance[]>([]);
+  const [confirmedCourierCounts, setConfirmedCourierCounts] = useState<ConfirmedCourierCount[]>([]);
+  const [dashboardTab, setDashboardTab] = useState<"overview" | "reports">("overview");
   const [loading, setLoading] = useState(true);
+  const canViewReports = ["admin", "superadmin"].includes(getRole() ?? "");
 
   useEffect(() => {
     async function load() {
@@ -698,6 +723,14 @@ function Dashboard() {
         setOrders(await ordersResponse.json());
         setProducts(await productsResponse.json());
         if (summaryResponse.ok) setSummary(await summaryResponse.json());
+        if (canViewReports) {
+          const [staffResponse, courierResponse] = await Promise.all([
+            apiFetch("/reports/staff-performance"),
+            apiFetch("/reports/confirmed-courier-wise"),
+          ]);
+          if (staffResponse.ok) setStaffPerformance(await staffResponse.json());
+          if (courierResponse.ok) setConfirmedCourierCounts(await courierResponse.json());
+        }
       } catch {
         // Individual pages expose detailed errors.
       } finally {
@@ -706,7 +739,7 @@ function Dashboard() {
     }
 
     load();
-  }, []);
+  }, [canViewReports]);
 
   const activeOrders = orders.filter(
     (order) =>
@@ -746,8 +779,33 @@ function Dashboard() {
               value={summary?.total_orders ?? orders.length}
               href="/orders"
             />
+            <StatCard
+              label="Confirmed orders"
+              value={summary?.confirmed_orders ?? 0}
+              href="/orders?status=confirmed"
+            />
+            <StatCard
+              label="Cancelled orders"
+              value={summary?.cancelled_orders ?? 0}
+              href="/orders?status=cancelled"
+            />
+            <StatCard
+              label="Delivered orders"
+              value={summary?.delivered_orders ?? 0}
+              href="/orders?status=delivered"
+            />
           </section>
 
+          {canViewReports && (
+            <section className="card dashboard-tabs">
+              <div className="tab-list" role="tablist" aria-label="Dashboard views">
+                <button className={`tab-button ${dashboardTab === "overview" ? "active" : ""}`} onClick={() => setDashboardTab("overview")} role="tab" aria-selected={dashboardTab === "overview"}>Overview</button>
+                <button className={`tab-button ${dashboardTab === "reports" ? "active" : ""}`} onClick={() => setDashboardTab("reports")} role="tab" aria-selected={dashboardTab === "reports"}>Staff & courier reports</button>
+              </div>
+            </section>
+          )}
+
+          {dashboardTab === "overview" ? <>
           <section className="card">
             <div className="section-heading">
               <div><span className="eyebrow">Pipeline</span><h2>Current status counts</h2></div>
@@ -875,6 +933,9 @@ function Dashboard() {
               )}
             </div>
           </section>
+          </> : (
+            <DashboardReports staffPerformance={staffPerformance} confirmedCourierCounts={confirmedCourierCounts} />
+          )}
         </>
       )}
     </Layout>
@@ -895,6 +956,65 @@ function StatCard({
       <span>{label}</span>
       <strong>{value}</strong>
     </Link>
+  );
+}
+
+function DashboardReports({
+  staffPerformance,
+  confirmedCourierCounts,
+}: {
+  staffPerformance: StaffPerformance[];
+  confirmedCourierCounts: ConfirmedCourierCount[];
+}) {
+  const chartData = staffPerformance
+    .filter((staff) => staff.CallsMade > 0)
+    .map((staff) => ({ name: staff.Name, value: staff.CallsMade }));
+  const colors = ["#2563eb", "#0f766e", "#d97706", "#b42318", "#7c3aed"];
+
+  return (
+    <section className="dashboard-grid dashboard-reports">
+      <div className="card">
+        <div className="section-heading">
+          <div><span className="eyebrow">Staff performance</span><h2>Calls by staff member</h2></div>
+        </div>
+        {chartData.length === 0 ? <p className="muted">No follow-up attempts recorded yet.</p> : (
+          <div className="report-chart">
+            <ResponsiveContainer width="100%" height={240}>
+              <PieChart>
+                <Pie data={chartData} dataKey="value" nameKey="name" innerRadius={55} outerRadius={85} paddingAngle={2}>
+                  {chartData.map((item, index) => <Cell key={item.name} fill={colors[index % colors.length]} />)}
+                </Pie>
+                <Tooltip />
+              </PieChart>
+            </ResponsiveContainer>
+          </div>
+        )}
+        <div className="compact-list">
+          {staffPerformance.length === 0 ? <p className="muted">No staff members yet.</p> : staffPerformance.map((staff) => (
+            <div className="compact-row" key={staff.UserID}>
+              <div><strong>{staff.Name}</strong><span>{staff.Role} · {staff.CallsMade} calls</span></div>
+              <span>{staff.OrdersConfirmed} confirmed · {staff.OrdersCancelled} cancelled</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="card">
+        <div className="section-heading">
+          <div><span className="eyebrow">Confirmed orders</span><h2>Courier and location</h2></div>
+        </div>
+        {confirmedCourierCounts.length === 0 ? <p className="muted">No confirmed courier orders yet.</p> : (
+          <div className="compact-list">
+            {confirmedCourierCounts.map((item) => (
+              <div className="compact-row" key={`${item.CourierName}-${item.LocationName ?? "unassigned"}`}>
+                <div><strong>{item.CourierName}</strong><span>{item.LocationName || "Unassigned location"}</span></div>
+                <span>{item.OrderCount} orders · {item.ProductCount} products</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </section>
   );
 }
 

@@ -3,7 +3,20 @@ SELECT
     COUNT(*) FILTER (WHERE o.created_at >= $1::timestamptz AND o.created_at < $2::timestamptz)::int AS today_orders,
     COUNT(*) FILTER (WHERE o.status = 'confirmed')::int AS pending_confirmations,
     COUNT(*) FILTER (WHERE o.status IN ('follow_up', 'hold', 'redirected', 'cancelled', 'returned'))::int AS problem_orders,
-    COUNT(*)::int AS total_orders
+    COUNT(*)::int AS total_orders,
+    COUNT(*) FILTER (WHERE o.status = 'confirmed' OR EXISTS (
+        SELECT 1 FROM status_history sh
+        WHERE sh.order_id = o.id
+            AND sh.company_id = o.company_id
+            AND sh.to_status = 'confirmed'
+    ))::int AS confirmed_orders,
+    COUNT(*) FILTER (WHERE o.status = 'cancelled')::int AS cancelled_orders
+    ,COUNT(*) FILTER (WHERE o.status = 'delivered' OR EXISTS (
+        SELECT 1 FROM status_history sh
+        WHERE sh.order_id = o.id
+            AND sh.company_id = o.company_id
+            AND sh.to_status = 'delivered'
+    ))::int AS delivered_orders
 FROM orders o
 WHERE o.company_id = $3::uuid;
 

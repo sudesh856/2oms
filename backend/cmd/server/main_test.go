@@ -64,6 +64,8 @@ func TestPhase3RoutesUseRealRouterAndRBAC(t *testing.T) {
 		{http.MethodPost, "/api/couriers/00000000-0000-0000-0000-000000000000/locations"},
 		{http.MethodPatch, "/api/couriers/00000000-0000-0000-0000-000000000000/locations/00000000-0000-0000-0000-000000000000"},
 		{http.MethodDelete, "/api/couriers/00000000-0000-0000-0000-000000000000/locations/00000000-0000-0000-0000-000000000000"},
+		{http.MethodGet, "/api/reports/staff-performance"},
+		{http.MethodGet, "/api/reports/confirmed-courier-wise"},
 	}
 
 	for _, route := range adminOnlyRoutes {
