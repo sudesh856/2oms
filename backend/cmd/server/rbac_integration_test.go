@@ -58,6 +58,7 @@ func TestEveryRegisteredRouteEnforcesRBAC(t *testing.T) {
 		{name: "create order", method: http.MethodPost, path: "/api/orders", body: `{}`, allowed: allRoles(), wantStatus: http.StatusBadRequest},
 		{name: "update order status", method: http.MethodPatch, path: "/api/orders/not-a-uuid/status", body: `{}`, allowed: allRoles(), wantStatus: http.StatusBadRequest},
 		{name: "create follow-up", method: http.MethodPost, path: "/api/orders/not-a-uuid/followup", body: `{}`, allowed: allRoles(), wantStatus: http.StatusBadRequest},
+		{name: "list order follow-ups", method: http.MethodGet, path: "/api/orders/not-a-uuid/followups", allowed: allRoles(), wantStatus: http.StatusBadRequest},
 		{name: "list follow-ups", method: http.MethodGet, path: "/api/followups", allowed: allRoles(), wantStatus: http.StatusOK},
 		{name: "dashboard summary", method: http.MethodGet, path: "/api/dashboard/summary", allowed: allRoles(), wantStatus: http.StatusOK},
 		{name: "legacy import status", method: http.MethodGet, path: "/api/imports/legacy", allowed: map[string]bool{"superadmin": true}, wantStatus: http.StatusNotFound},

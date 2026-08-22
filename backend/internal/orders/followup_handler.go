@@ -23,6 +23,100 @@ type createFollowUpRequest struct {
 	Note           string `json:"note"`
 }
 
+type followUpResponse struct {
+	ID              string  `json:"id"`
+	OrderID         string  `json:"order_id"`
+	AttemptNo       int32   `json:"attempt_no"`
+	NextAction      string  `json:"next_action"`
+	PreferredDay    string  `json:"preferred_day,omitempty"`
+	NextActionDate  *string `json:"next_action_date"`
+	Note            string  `json:"note"`
+	AssignedTo      string  `json:"assigned_to"`
+	CreatedAt       string  `json:"created_at"`
+	Status          string  `json:"status,omitempty"`
+	CustomerID      string  `json:"customer_id,omitempty"`
+	CustomerName    string  `json:"customer_name,omitempty"`
+	CustomerPhone   string  `json:"customer_phone,omitempty"`
+	AssignedToName  string  `json:"assigned_to_name,omitempty"`
+	AssignedToPhone string  `json:"assigned_to_phone,omitempty"`
+}
+
+func formatCreateFollowUp(row db.CreateFollowUpRow) followUpResponse {
+	var date *string
+	if row.NextActionDate.Valid {
+		d := row.NextActionDate.Time.Format("2006-01-02")
+		date = &d
+	}
+	var createdAt string
+	if row.CreatedAt.Valid {
+		createdAt = row.CreatedAt.Time.Format(time.RFC3339)
+	}
+	return followUpResponse{
+		ID:             uuid.UUID(row.ID.Bytes).String(),
+		OrderID:        uuid.UUID(row.OrderID.Bytes).String(),
+		AttemptNo:      row.AttemptNo,
+		NextAction:     row.NextAction.String,
+		PreferredDay:   row.PreferredDay.String,
+		NextActionDate: date,
+		Note:           row.Note.String,
+		AssignedTo:     uuid.UUID(row.AssignedTo.Bytes).String(),
+		CreatedAt:      createdAt,
+	}
+}
+
+func formatListFollowUp(row db.ListFollowUpsRow) followUpResponse {
+	var date *string
+	if row.NextActionDate.Valid {
+		d := row.NextActionDate.Time.Format("2006-01-02")
+		date = &d
+	}
+	var createdAt string
+	if row.CreatedAt.Valid {
+		createdAt = row.CreatedAt.Time.Format(time.RFC3339)
+	}
+	return followUpResponse{
+		ID:              uuid.UUID(row.ID.Bytes).String(),
+		OrderID:         uuid.UUID(row.OrderID.Bytes).String(),
+		AttemptNo:       row.AttemptNo,
+		NextAction:      row.NextAction.String,
+		PreferredDay:    row.PreferredDay.String,
+		NextActionDate:  date,
+		Note:            row.Note.String,
+		AssignedTo:      uuid.UUID(row.AssignedTo.Bytes).String(),
+		CreatedAt:       createdAt,
+		Status:          string(row.Status),
+		CustomerID:      uuid.UUID(row.CustomerID.Bytes).String(),
+		CustomerName:    row.CustomerName,
+		CustomerPhone:   row.CustomerPhone,
+		AssignedToName:  row.AssignedToName.String,
+		AssignedToPhone: row.AssignedToPhone.String,
+	}
+}
+
+func formatListFollowUpsForOrder(row db.ListFollowUpsForOrderRow) followUpResponse {
+	var date *string
+	if row.NextActionDate.Valid {
+		d := row.NextActionDate.Time.Format("2006-01-02")
+		date = &d
+	}
+	var createdAt string
+	if row.CreatedAt.Valid {
+		createdAt = row.CreatedAt.Time.Format(time.RFC3339)
+	}
+	return followUpResponse{
+		ID:             uuid.UUID(row.ID.Bytes).String(),
+		OrderID:        uuid.UUID(row.OrderID.Bytes).String(),
+		AttemptNo:      row.AttemptNo,
+		NextAction:     row.NextAction.String,
+		PreferredDay:   row.PreferredDay.String,
+		NextActionDate: date,
+		Note:           row.Note.String,
+		AssignedTo:     uuid.UUID(row.AssignedTo.Bytes).String(),
+		CreatedAt:      createdAt,
+		AssignedToName: row.AssignedToName.String,
+	}
+}
+
 func (h *Handler) CreateFollowUp(w http.ResponseWriter, r *http.Request) {
 	claims, ok := auth.GetClaims(r.Context())
 	if !ok {
@@ -129,7 +223,7 @@ func (h *Handler) CreateFollowUp(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(followUp)
+	json.NewEncoder(w).Encode(formatCreateFollowUp(followUp))
 }
 
 func writeFollowUpOrderError(w http.ResponseWriter, err error) {
@@ -157,9 +251,35 @@ func (h *Handler) ListFollowUps(w http.ResponseWriter, r *http.Request) {
 		api.WriteError(w, http.StatusInternalServerError, "FOLLOW_UPS_FETCH_FAILED", "failed to list follow-ups")
 		return
 	}
-	if items == nil {
-		items = []db.ListFollowUpsRow{}
+	res := make([]followUpResponse, 0, len(items))
+	for _, item := range items {
+		res = append(res, formatListFollowUp(item))
 	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(items)
+	json.NewEncoder(w).Encode(res)
+}
+
+func (h *Handler) ListOrderFollowUps(w http.ResponseWriter, r *http.Request) {
+	companyID, ok := auth.GetCompanyID(r.Context())
+	if !ok {
+		api.WriteError(w, http.StatusUnauthorized, "UNAUTHORIZED", "unauthorized")
+		return
+	}
+	orderUUID, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		api.WriteError(w, http.StatusBadRequest, "INVALID_ORDER_ID", "invalid order id")
+		return
+	}
+	orderID := pgtype.UUID{Bytes: orderUUID, Valid: true}
+	items, err := h.Queries.ListFollowUpsForOrder(r.Context(), db.ListFollowUpsForOrderParams{OrderID: orderID, CompanyID: companyID})
+	if err != nil {
+		api.WriteError(w, http.StatusInternalServerError, "FOLLOW_UPS_FETCH_FAILED", "failed to list order follow-ups")
+		return
+	}
+	res := make([]followUpResponse, 0, len(items))
+	for _, item := range items {
+		res = append(res, formatListFollowUpsForOrder(item))
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(res)
 }

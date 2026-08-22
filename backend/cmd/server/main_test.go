@@ -95,6 +95,14 @@ func TestPhase3RoutesUseRealRouterAndRBAC(t *testing.T) {
 		t.Fatalf("staff POST /api/orders/{id}/followup did not reach the real handler: %d: %s", followUpRecording.Code, followUpRecording.Body.String())
 	}
 
+	orderFollowUpsRequest := httptest.NewRequest(http.MethodGet, "/api/orders/not-a-uuid/followups", nil)
+	orderFollowUpsRequest.Header.Set("Authorization", "Bearer "+staffToken)
+	orderFollowUpsRecording := httptest.NewRecorder()
+	router.ServeHTTP(orderFollowUpsRecording, orderFollowUpsRequest)
+	if orderFollowUpsRecording.Code != http.StatusBadRequest {
+		t.Fatalf("staff GET /api/orders/{id}/followups did not reach the real handler: %d: %s", orderFollowUpsRecording.Code, orderFollowUpsRecording.Body.String())
+	}
+
 	followUpsRequest := httptest.NewRequest(http.MethodGet, "/api/followups?due_today=true&unanswered=true", nil)
 	followUpsRequest.Header.Set("Authorization", "Bearer "+staffToken)
 	followUpsRecording := httptest.NewRecorder()

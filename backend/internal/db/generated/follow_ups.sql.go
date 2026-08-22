@@ -218,3 +218,70 @@ func (q *Queries) ListFollowUps(ctx context.Context, arg ListFollowUpsParams) ([
 	}
 	return items, nil
 }
+
+const listFollowUpsForOrder = `-- name: ListFollowUpsForOrder :many
+SELECT
+    f.id,
+    f.order_id,
+    f.attempt_no,
+    f.next_action,
+    f.preferred_day,
+    f.next_action_date,
+    f.note,
+    f.assigned_to,
+    f.created_at,
+    u.name AS assigned_to_name
+FROM follow_ups f
+LEFT JOIN users u ON u.id = f.assigned_to
+WHERE f.order_id = $1 AND f.company_id = $2
+ORDER BY f.created_at DESC
+`
+
+type ListFollowUpsForOrderParams struct {
+	OrderID   pgtype.UUID
+	CompanyID pgtype.UUID
+}
+
+type ListFollowUpsForOrderRow struct {
+	ID             pgtype.UUID
+	OrderID        pgtype.UUID
+	AttemptNo      int32
+	NextAction     pgtype.Text
+	PreferredDay   pgtype.Text
+	NextActionDate pgtype.Date
+	Note           pgtype.Text
+	AssignedTo     pgtype.UUID
+	CreatedAt      pgtype.Timestamptz
+	AssignedToName pgtype.Text
+}
+
+func (q *Queries) ListFollowUpsForOrder(ctx context.Context, arg ListFollowUpsForOrderParams) ([]ListFollowUpsForOrderRow, error) {
+	rows, err := q.db.Query(ctx, listFollowUpsForOrder, arg.OrderID, arg.CompanyID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListFollowUpsForOrderRow
+	for rows.Next() {
+		var i ListFollowUpsForOrderRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrderID,
+			&i.AttemptNo,
+			&i.NextAction,
+			&i.PreferredDay,
+			&i.NextActionDate,
+			&i.Note,
+			&i.AssignedTo,
+			&i.CreatedAt,
+			&i.AssignedToName,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}

@@ -67,6 +67,23 @@ AND (
 AND f.company_id = $3::uuid
 ORDER BY f.next_action_date NULLS LAST, f.created_at ASC;
 
+-- name: ListFollowUpsForOrder :many
+SELECT
+    f.id,
+    f.order_id,
+    f.attempt_no,
+    f.next_action,
+    f.preferred_day,
+    f.next_action_date,
+    f.note,
+    f.assigned_to,
+    f.created_at,
+    u.name AS assigned_to_name
+FROM follow_ups f
+LEFT JOIN users u ON u.id = f.assigned_to
+WHERE f.order_id = $1 AND f.company_id = $2
+ORDER BY f.created_at DESC;
+
 -- name: DeleteFollowUp :exec
 DELETE FROM follow_ups
 WHERE id = $1 AND company_id = $2;

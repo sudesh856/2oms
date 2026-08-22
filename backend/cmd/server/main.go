@@ -138,6 +138,7 @@ func NewRouter(
 		r.With(auth.RequireRole("superadmin", "admin", "staff")).Post("/api/orders", orderHandler.CreateOrder)
 		r.With(auth.RequireRole("superadmin", "admin", "staff")).Patch("/api/orders/{id}/status", orderHandler.UpdateStatus)
 		r.With(auth.RequireRole("superadmin", "admin", "staff")).Post("/api/orders/{id}/followup", orderHandler.CreateFollowUp)
+		r.With(auth.RequireRole("superadmin", "admin", "staff")).Get("/api/orders/{id}/followups", orderHandler.ListOrderFollowUps)
 		r.With(auth.RequireRole("superadmin", "admin", "staff")).Get("/api/followups", orderHandler.ListFollowUps)
 		r.With(auth.RequireRole("superadmin", "admin", "staff")).Get("/api/dashboard/summary", reportHandler.Summary)
 		r.With(auth.RequireRole("superadmin", "admin")).Get("/api/reports/staff-performance", reportHandler.StaffPerformance)

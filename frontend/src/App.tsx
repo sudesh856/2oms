@@ -20,10 +20,12 @@ import {
   normalizeOrder,
   normalizeOrderItem,
   normalizeProduct,
+  normalizeFollowUp,
   type CartItem,
   type Courier,
   type CourierLocation,
   type Customer,
+  type FollowUp,
   type Order,
   type OrderItem,
   type Product,
@@ -38,17 +40,7 @@ type TokenPayload = {
   exp?: number;
 };
 
-type FollowUp = {
-  id: string;
-  order_id: string;
-  attempt_no: number;
-  next_action: string;
-  next_action_date?: string | null;
-  note?: string | null;
-  customer_name: string;
-  customer_phone: string;
-  assigned_to_name?: string | null;
-};
+
 
 
 type DashboardSummary = {
@@ -230,7 +222,7 @@ function money(value: unknown) {
   return String(value);
 }
 
-function formatDate(value: string) {
+function formatDate(value?: string | null) {
   if (!value) return "—";
 
   return new Date(value).toLocaleString();
@@ -629,7 +621,8 @@ function Dashboard() {
           throw new Error("Failed to load dashboard");
         }
 
-        setOrders(await ordersResponse.json());
+        const ordersData = await ordersResponse.json();
+        setOrders(Array.isArray(ordersData) ? ordersData.map(normalizeOrder) : []);
         setProducts(await productsResponse.json());
         if (summaryResponse.ok) setSummary(await summaryResponse.json());
         if (canViewReports) {
@@ -735,12 +728,20 @@ function Dashboard() {
                 <p className="muted">No follow-ups due today.</p>
               ) : (
                 <div className="compact-list">
-                  {(summary?.follow_ups_due ?? []).slice(0, 5).map((followUp) => (
-                    <Link className="compact-row" to={`/orders/${followUp.OrderID}`} key={followUp.ID}>
-                      <div><strong>{followUp.CustomerName}</strong><span>{followUp.CustomerPhone} · {followUp.NextAction}</span></div>
-                      <span>{followUp.Note || "-"}</span>
-                    </Link>
-                  ))}
+                  {(summary?.follow_ups_due ?? []).slice(0, 5).map((followUp: any) => {
+                    const orderId = followUp.OrderID || followUp.order_id || "";
+                    const id = followUp.ID || followUp.id || orderId;
+                    const custName = followUp.CustomerName || followUp.customer_name || "—";
+                    const custPhone = followUp.CustomerPhone || followUp.customer_phone || "—";
+                    const action = followUp.NextAction || followUp.next_action || "—";
+                    const note = followUp.Note || followUp.note || "-";
+                    return (
+                      <Link className="compact-row" to={`/orders/${orderId}`} key={id}>
+                        <div><strong>{custName}</strong><span>{custPhone} · {action}</span></div>
+                        <span>{note}</span>
+                      </Link>
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -789,7 +790,7 @@ function Dashboard() {
                     >
                       <div>
                         <strong>
-                          {order.id.slice(0, 8)}
+                          {order.id ? order.id.slice(0, 8) : "—"}
                         </strong>
                         <span>
                           {order.source} · {formatDate(order.created_at)}
@@ -1204,7 +1205,10 @@ function CustomerDetail() {
         setCustomer(normalizeCustomer(await response.json()));
 
         const historyResponse = await apiFetch(`/customers/${id}/history`);
-        if (historyResponse.ok) setOrders(await historyResponse.json());
+        if (historyResponse.ok) {
+          const historyData = await historyResponse.json();
+          setOrders(Array.isArray(historyData) ? historyData.map(normalizeOrder) : []);
+        }
       } catch (err) {
         setError(
           err instanceof Error
@@ -1252,7 +1256,23 @@ function CustomerDetail() {
           <div className="card table-card">
             <span className="eyebrow">History</span>
             <h2>Orders for this customer</h2>
-            {orders.length === 0 ? <p className="muted">No orders found.</p> : <div className="compact-list">{orders.map((order) => <Link className="compact-row" to={`/orders/${order.id}`} key={order.id}><strong>{order.id.slice(0, 8)}</strong><StatusBadge status={order.status} /><span>{formatDate(order.created_at)}</span></Link>)}</div>}
+            {orders.length === 0 ? (
+              <p className="muted">No orders found.</p>
+            ) : (
+              <div className="compact-list">
+                {orders.map((order, idx) => (
+                  <Link
+                    className="compact-row"
+                    to={`/orders/${order.id}`}
+                    key={order.id || idx}
+                  >
+                    <strong>{order.id ? order.id.slice(0, 8) : "—"}</strong>
+                    <StatusBadge status={order.status} />
+                    <span>{formatDate(order.created_at)}</span>
+                  </Link>
+                ))}
+              </div>
+            )}
           </div>
 
           <div className="card">
@@ -2010,10 +2030,10 @@ function CreateOrder() {
         throw new Error(await readError(response));
       }
 
-      const order: Order = await response.json();
+      const order = normalizeOrder(await response.json());
 
       setMessage(
-        `Order ${order.id.slice(0, 8)} created successfully.`
+        `Order ${order.id ? order.id.slice(0, 8) : "—"} created successfully.`
       );
 
       setCart([]);
@@ -2503,10 +2523,10 @@ function Orders() {
               </thead>
 
               <tbody>
-                {orders.map((order) => (
-                  <tr key={order.id}>
+                {orders.map((order, idx) => (
+                  <tr key={order.id || idx}>
                     <td>
-                      <strong>{order.id.slice(0, 8)}</strong>
+                      <strong>{order.id ? order.id.slice(0, 8) : "—"}</strong>
                       {order.is_legacy && <LegacyBadge />}
                     </td>
                     <td>{order.source}</td>
@@ -2548,6 +2568,7 @@ function OrderDetail() {
   const [selectedLocationID, setSelectedLocationID] = useState("");
   const [savingCourier, setSavingCourier] = useState(false);
   const [newStatus, setNewStatus] = useState("");
+  const [followUps, setFollowUps] = useState<FollowUp[]>([]);
   const [followUpAction, setFollowUpAction] = useState("no_answer");
   const [followUpDate, setFollowUpDate] = useState("");
   const [followUpNote, setFollowUpNote] = useState("");
@@ -2633,6 +2654,12 @@ function OrderDetail() {
       if (productsResponse.ok) {
         const data = await productsResponse.json();
         setProducts(Array.isArray(data) ? data.map(normalizeProduct) : []);
+      }
+
+      const followUpsResponse = await apiFetch(`/orders/${id}/followups`);
+      if (followUpsResponse.ok) {
+        const data = await followUpsResponse.json();
+        setFollowUps(Array.isArray(data) ? data.map(normalizeFollowUp) : []);
       }
     } catch (err) {
       setError(
@@ -2774,6 +2801,11 @@ function OrderDetail() {
       if (!response.ok) throw new Error(await readError(response));
       setFollowUpNote("");
       setMessage("Follow-up recorded.");
+      const followUpsResponse = await apiFetch(`/orders/${id}/followups`);
+      if (followUpsResponse.ok) {
+        const data = await followUpsResponse.json();
+        setFollowUps(Array.isArray(data) ? data.map(normalizeFollowUp) : []);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to record follow-up");
     } finally {
@@ -2816,7 +2848,7 @@ function OrderDetail() {
     <Layout>
       <PageHeader
         eyebrow="Order"
-        title={order ? order.id.slice(0, 8) : "Order"}
+        title={order ? (order.id ? order.id.slice(0, 8) : "—") : "Order"}
         description={
           order
             ? `Created ${formatDate(order.created_at)}`
@@ -2956,7 +2988,10 @@ function OrderDetail() {
                 <div>
                   <span className="eyebrow">Customer</span>
                   <h2>
-                    {customer?.name || order.customer_id.slice(0, 8)}
+                    {customer?.name ||
+                      (order.customer_id
+                        ? order.customer_id.slice(0, 8)
+                        : "—")}
                   </h2>
                 </div>
               </div>
@@ -2999,7 +3034,9 @@ function OrderDetail() {
                         <div>
                           <strong>
                             {product?.name ||
-                              item.product_id.slice(0, 8)}
+                              (item.product_id
+                                ? item.product_id.slice(0, 8)
+                                : "—")}
                           </strong>
                           <span>
                             {item.quantity} × Rs.{" "}
@@ -3076,6 +3113,31 @@ function OrderDetail() {
               )}
 
               <hr />
+              <h2>Follow-up history</h2>
+              {followUps.length === 0 ? (
+                <p className="muted small">No follow-ups recorded yet.</p>
+              ) : (
+                <div className="compact-list" style={{ marginBottom: "1rem" }}>
+                  {followUps.map((fu) => (
+                    <div className="compact-row" key={fu.id}>
+                      <div>
+                        <strong>
+                          {fu.next_action === "call_again" ? "Call again" : fu.next_action === "no_answer" ? "No answer" : fu.next_action || "Follow-up"} #{fu.attempt_no}
+                        </strong>
+                        <span>
+                          {formatDate(fu.created_at)}
+                          {fu.assigned_to_name ? ` · by ${fu.assigned_to_name}` : ""}
+                        </span>
+                        {fu.note && <p className="small" style={{ margin: "4px 0 0 0" }}>{fu.note}</p>}
+                        {fu.next_action_date && (
+                          <span className="small muted">Due: {fu.next_action_date}</span>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
               <h2>Record follow-up</h2>
               <label>
                 Action
@@ -3118,7 +3180,8 @@ function FollowUps() {
         });
         const response = await apiFetch(`/followups?${params.toString()}`);
         if (!response.ok) throw new Error(await readError(response));
-        setItems(await response.json());
+        const data = await response.json();
+        setItems(Array.isArray(data) ? data.map(normalizeFollowUp) : []);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to load follow-ups");
       }
@@ -3139,7 +3202,34 @@ function FollowUps() {
           <div className="table-wrap">
             <table>
               <thead><tr><th>Customer</th><th>Action</th><th>Due</th><th>Assigned to</th><th>Note</th></tr></thead>
-              <tbody>{items.map((item) => <tr key={item.id}><td><strong>{item.customer_name}</strong><br />{item.customer_phone}</td><td>{item.next_action} #{item.attempt_no}</td><td>{item.next_action_date || "-"}</td><td>{item.assigned_to_name || "Unassigned"}</td><td>{item.note || "-"}</td></tr>)}</tbody>
+              <tbody>
+                {items.map((item, idx) => (
+                  <tr key={item.id || idx}>
+                    <td>
+                      {item.order_id ? (
+                        <Link className="text-link" to={`/orders/${item.order_id}`}>
+                          <strong>{item.customer_name || "—"}</strong>
+                        </Link>
+                      ) : (
+                        <strong>{item.customer_name || "—"}</strong>
+                      )}
+                      <br />
+                      {item.customer_phone || "—"}
+                    </td>
+                    <td>
+                      {item.next_action === "call_again"
+                        ? "Call again"
+                        : item.next_action === "no_answer"
+                          ? "No answer"
+                          : item.next_action || "—"}{" "}
+                      #{item.attempt_no}
+                    </td>
+                    <td>{item.next_action_date || "-"}</td>
+                    <td>{item.assigned_to_name || "Unassigned"}</td>
+                    <td>{item.note || "-"}</td>
+                  </tr>
+                ))}
+              </tbody>
             </table>
           </div>
         )}
@@ -3847,7 +3937,8 @@ function ProblemOrders() {
       try {
         const response = await apiFetch("/orders/problems");
         if (!response.ok) throw new Error(await readError(response));
-        setOrders(await response.json());
+        const data = await response.json();
+        setOrders(Array.isArray(data) ? data.map(normalizeOrder) : []);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to load problem orders");
       }
@@ -3859,7 +3950,38 @@ function ProblemOrders() {
     <Layout>
       <PageHeader eyebrow="Orders" title="Problem orders" description="Follow-up, hold, redirect, cancelled, and returned orders" />
       {error && <div className="alert error">{error}</div>}
-      <div className="card table-card"><div className="table-wrap"><table><thead><tr><th>Order</th><th>Status</th><th>Source</th><th>Created</th></tr></thead><tbody>{orders.map((order) => <tr key={order.id}><td><Link className="text-link" to={`/orders/${order.id}`}>{order.id.slice(0, 8)}</Link></td><td><StatusBadge status={order.status} /></td><td>{order.source}</td><td>{formatDate(order.created_at)}</td></tr>)}</tbody></table></div></div>
+      <div className="card table-card">
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Order</th>
+                <th>Status</th>
+                <th>Source</th>
+                <th>Created</th>
+              </tr>
+            </thead>
+            <tbody>
+              {orders.map((order, idx) => (
+                <tr key={order.id || idx}>
+                  <td>
+                    {order.id ? (
+                      <Link className="text-link" to={`/orders/${order.id}`}>
+                        {order.id.slice(0, 8)}
+                      </Link>
+                    ) : (
+                      "—"
+                    )}
+                  </td>
+                  <td><StatusBadge status={order.status} /></td>
+                  <td>{order.source || "—"}</td>
+                  <td>{formatDate(order.created_at)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
     </Layout>
   );
 }
