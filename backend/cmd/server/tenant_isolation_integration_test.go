@@ -1,7 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -318,6 +321,75 @@ func TestLegacyCourierLocationsAreNCMOnly(t *testing.T) {
 	}
 }
 
+func TestMappedUploadIsTenantScoped(t *testing.T) {
+	_ = godotenv.Load("../../../.env")
+	databaseURL := os.Getenv("DATABASE_URL")
+	secret := os.Getenv("JWT_SECRET")
+	if databaseURL == "" || secret == "" {
+		t.Skip("DATABASE_URL and JWT_SECRET are required")
+	}
+	pool, err := connection.NewPool(databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	ctx := context.Background()
+	var migrated bool
+	if err := pool.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'import_uploads')").Scan(&migrated); err != nil || !migrated {
+		t.Skip("mapped upload migration 000010 is not applied")
+	}
+	first, err := createTenantFixture(ctx, pool, "upload-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := createTenantFixture(ctx, pool, "upload-b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanupTenantFixtures(t, pool, first.companyID, second.companyID)
+	router := newIntegrationRouterWithPool(t, pool, secret)
+	firstToken := mustTenantToken(t, first.userID, first.companyID, secret)
+	secondToken := mustTenantToken(t, second.userID, second.companyID, secret)
+	uploadRequest := func(token, content string) (int, string) {
+		var body bytes.Buffer
+		writer := multipart.NewWriter(&body)
+		part, partErr := writer.CreateFormFile("orders", "orders.csv")
+		if partErr != nil {
+			t.Fatal(partErr)
+		}
+		_, _ = part.Write([]byte(content))
+		_ = writer.Close()
+		req := httptest.NewRequest(http.MethodPost, "/api/imports/mapped/upload", &body)
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Content-Type", writer.FormDataContentType())
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		return rec.Code, rec.Body.String()
+	}
+	status, body := uploadRequest(firstToken, "Customer,Mobile,Street,Item,Amount\nAsha,9812345678,Kathmandu,Belt,1000\n")
+	if status != http.StatusCreated {
+		t.Fatalf("company A upload failed: %d %s", status, body)
+	}
+	var response struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal([]byte(body), &response); err != nil || response.ID == "" {
+		t.Fatalf("company A upload did not return an ID: %s", body)
+	}
+	status, body = tenantRequest(router, secondToken, http.MethodGet, "/api/imports/mapped/"+response.ID+"/preview", "")
+	if status != http.StatusNotFound || strings.Contains(body, "Customer") {
+		t.Fatalf("company B accessed company A preview: %d %s", status, body)
+	}
+	status, body = tenantRequest(router, secondToken, http.MethodPut, "/api/imports/mapped/"+response.ID+"/mapping", `{"mapping":{"name":"Customer","phone":"Mobile","address":"Street","product":"Item","cod_amount":"Amount"}}`)
+	if status != http.StatusNotFound {
+		t.Fatalf("company B accessed company A mapping: %d %s", status, body)
+	}
+	status, body = uploadRequest(firstToken, "Customer,Mobile,Street,Item,Amount\n=cmd,9812345678,Kathmandu,Belt,1000\n")
+	if status != http.StatusBadRequest || strings.Contains(body, "=cmd") {
+		t.Fatalf("malicious upload was not rejected safely: %d %s", status, body)
+	}
+}
+
 func createTenantFixture(ctx context.Context, pool *pgxpool.Pool, suffix string) (tenantFixture, error) {
 	fixture := tenantFixture{
 		companyID: uuid.New(), userID: uuid.New(), customerID: uuid.New(), productID: uuid.New(),
@@ -359,6 +431,10 @@ func cleanupTenantFixtures(t *testing.T, pool *pgxpool.Pool, companyIDs ...uuid.
 	var importRunsExists bool
 	if err := pool.QueryRow(ctx, "SELECT to_regclass('public.legacy_import_runs') IS NOT NULL").Scan(&importRunsExists); err == nil && importRunsExists {
 		tables = append([]string{"legacy_import_runs"}, tables...)
+	}
+	var uploadsExist bool
+	if err := pool.QueryRow(ctx, "SELECT to_regclass('public.import_uploads') IS NOT NULL").Scan(&uploadsExist); err == nil && uploadsExist {
+		tables = append([]string{"import_uploads"}, tables...)
 	}
 	for _, table := range tables {
 		if _, err := pool.Exec(ctx, "DELETE FROM "+table+" WHERE company_id = ANY($1)", companyIDs); err != nil {

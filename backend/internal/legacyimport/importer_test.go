@@ -1,6 +1,7 @@
 package legacyimport
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"strings"
@@ -43,6 +44,26 @@ func TestConfiguredSourceURLRequiresServerConfiguration(t *testing.T) {
 	t.Setenv("LEGACY_SOURCE_URL", "https://private.example/legacy/")
 	if source := ConfiguredSourceURL(); source != "https://private.example/legacy/" {
 		t.Fatalf("unexpected configured source URL: %q", source)
+	}
+}
+
+func TestUploadedFileMappingAndValidation(t *testing.T) {
+	table, err := ParseUploadedFile("orders.csv", []byte("Customer,Mobile,Street,Item,Amount\nAsha,9812345678,Kathmandu,Belt,1000\n"))
+	if err != nil {
+		t.Fatalf("parse uploaded CSV: %v", err)
+	}
+	rows, err := MapUploadedRows(table, map[string]string{"name": "Customer", "phone": "Mobile", "address": "Street", "product": "Item", "cod_amount": "Amount"})
+	if err != nil || len(rows) != 1 || rows[0].Name != "Asha" || rows[0].COD != "1000" {
+		t.Fatalf("unexpected mapped row: %#v, %v", rows, err)
+	}
+	if _, err := ParseUploadedFile("orders.csv", []byte("name,phone,address,product,cod\n=cmd,9812345678,Address,Item,100\n")); err == nil {
+		t.Fatal("formula-like CSV value was accepted")
+	}
+	if _, err := ParseUploadedFile("orders.txt", []byte("name\nvalue\n")); err == nil {
+		t.Fatal("unsupported upload type was accepted")
+	}
+	if _, err := ParseUploadedFile("orders.csv", bytes.Repeat([]byte("x"), MaxUploadSize+1)); err == nil {
+		t.Fatal("oversized upload was accepted")
 	}
 }
 

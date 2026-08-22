@@ -43,6 +43,22 @@ type DailyRow struct {
 	Delivery string
 }
 
+type MappedRow struct {
+	Line     int
+	Date     string
+	Name     string
+	Phone    string
+	Phone2   string
+	Address  string
+	Product  string
+	Quantity int32
+	COD      string
+	Status   string
+	Remarks  string
+	Courier  string
+	Location string
+}
+
 type ReviewRow struct {
 	Source string `json:"source"`
 	Line   int    `json:"line"`
@@ -77,8 +93,12 @@ func NormalizePhone(value string) string {
 }
 
 func LegacySourceKey(row DailyRow) string {
+	return MappedSourceKey(MappedRow{Line: row.Line, Date: row.Tab, Name: row.Name, Phone: row.Phone, Address: row.Address, Product: row.Product, COD: row.COD})
+}
+
+func MappedSourceKey(row MappedRow) string {
 	value := strings.Join([]string{
-		normalizeName(row.Tab), NormalizePhone(row.Phone), normalizeName(row.Name),
+		normalizeName(row.Date), NormalizePhone(row.Phone), normalizeName(row.Name),
 		normalizeName(row.Address), normalizeName(row.Product), strings.TrimSpace(row.COD),
 	}, "\x1f")
 	return fmt.Sprintf("%x", sha256.Sum256([]byte(value)))
@@ -421,16 +441,25 @@ func numericInt(value string) int32 {
 }
 
 type Importer struct {
-	Pool      *pgxpool.Pool
-	Queries   *db.Queries
-	CreatedBy pgtype.UUID
-	CompanyID pgtype.UUID
-	Source    db.OrderSource
-	Year      int
-	Review    []ReviewRow
+	Pool               *pgxpool.Pool
+	Queries            *db.Queries
+	CreatedBy          pgtype.UUID
+	CompanyID          pgtype.UUID
+	Source             db.OrderSource
+	Year               int
+	Review             []ReviewRow
+	AutoCreateProducts bool
 }
 
 func (i *Importer) ImportDaily(ctx context.Context, rows []DailyRow) (Counts, error) {
+	mapped := make([]MappedRow, 0, len(rows))
+	for _, row := range rows {
+		mapped = append(mapped, MappedRow{Line: row.Line, Date: row.Tab, Name: row.Name, Phone: row.Phone, Phone2: row.Phone2, Address: row.Address, Product: row.Product, Quantity: 1, COD: row.COD, Status: row.Status, Remarks: row.Remarks})
+	}
+	return i.ImportMapped(ctx, mapped)
+}
+
+func (i *Importer) ImportMapped(ctx context.Context, rows []MappedRow) (Counts, error) {
 	counts := Counts{Read: len(rows)}
 	products, err := i.Queries.ListProducts(ctx, db.ListProductsParams{CompanyID: i.CompanyID, Column2: ""})
 	if err != nil {
@@ -441,13 +470,31 @@ func (i *Importer) ImportDaily(ctx context.Context, rows []DailyRow) (Counts, er
 		productByName[normalizeName(product.Name)] = product
 	}
 	for _, row := range rows {
-		product, ok := productByName[normalizeName(row.Product)]
-		if !ok {
-			i.Review = append(i.Review, ReviewRow{Source: "orders.csv", Line: row.Line, Reason: "product not found", Data: row})
+		if row.Name == "" || NormalizePhone(row.Phone) == "" || row.Address == "" || row.Product == "" || row.COD == "" {
+			i.Review = append(i.Review, ReviewRow{Source: "mapped orders", Line: row.Line, Reason: "missing required customer, address, product, or COD field", Data: row})
 			counts.Skipped++
 			continue
 		}
-		createdAt, err := ParseDate(row.Tab, i.Year)
+		product, ok := productByName[normalizeName(row.Product)]
+		if !ok {
+			if i.AutoCreateProducts {
+				price := pgtype.Numeric{}
+				if err := price.Scan("0"); err != nil {
+					return counts, err
+				}
+				created, createErr := i.Queries.CreateProduct(ctx, db.CreateProductParams{Name: row.Product, Price: price, CompanyID: i.CompanyID})
+				if createErr != nil {
+					return counts, createErr
+				}
+				product = db.ListProductsRow{ID: created.ID, Name: created.Name, Price: created.Price}
+				productByName[normalizeName(row.Product)] = product
+			} else {
+				i.Review = append(i.Review, ReviewRow{Source: "orders.csv", Line: row.Line, Reason: "product not found", Data: row})
+				counts.Skipped++
+				continue
+			}
+		}
+		createdAt, err := ParseDate(row.Date, i.Year)
 		if err != nil {
 			i.Review = append(i.Review, ReviewRow{Source: "orders.csv", Line: row.Line, Reason: err.Error(), Data: row})
 			counts.Skipped++
@@ -464,6 +511,10 @@ func (i *Importer) ImportDaily(ctx context.Context, rows []DailyRow) (Counts, er
 		if err != nil {
 			return counts, err
 		}
+		courierID, locationID, err := i.resolveRouting(ctx, row)
+		if err != nil {
+			return counts, err
+		}
 		tx, err := i.Pool.Begin(ctx)
 		if err != nil {
 			return counts, err
@@ -472,8 +523,9 @@ func (i *Importer) ImportDaily(ctx context.Context, rows []DailyRow) (Counts, er
 		order, err := queries.CreateLegacyOrder(ctx, db.CreateLegacyOrderParams{
 			CustomerID: customerID, Source: i.Source, Status: status, Address: row.Address,
 			CodAmount: cod, IsStoreVisit: strings.EqualFold(row.Status, "store visit"),
-			CreatedBy: i.CreatedBy, CreatedAt: pgtype.Timestamptz{Time: createdAt, Valid: true},
-			CompanyID: i.CompanyID, LegacySourceKey: pgtype.Text{String: LegacySourceKey(row), Valid: true},
+			CourierID: courierID, LocationID: locationID, CreatedBy: i.CreatedBy,
+			CreatedAt: pgtype.Timestamptz{Time: createdAt, Valid: true},
+			CompanyID: i.CompanyID, LegacySourceKey: pgtype.Text{String: MappedSourceKey(row), Valid: true},
 		})
 		if err == pgx.ErrNoRows {
 			_ = tx.Rollback(ctx)
@@ -481,7 +533,11 @@ func (i *Importer) ImportDaily(ctx context.Context, rows []DailyRow) (Counts, er
 			continue
 		}
 		if err == nil {
-			_, err = queries.CreateOrderItem(ctx, db.CreateOrderItemParams{OrderID: order.ID, ProductID: product.ID, Quantity: 1, Price: product.Price, CompanyID: i.CompanyID})
+			quantity := row.Quantity
+			if quantity < 1 {
+				quantity = 1
+			}
+			_, err = queries.CreateOrderItem(ctx, db.CreateOrderItemParams{OrderID: order.ID, ProductID: product.ID, Quantity: quantity, Price: product.Price, CompanyID: i.CompanyID})
 		}
 		if err == nil {
 			_, err = queries.CreateStatusHistory(ctx, db.CreateStatusHistoryParams{OrderID: order.ID, ToStatus: status, ChangedBy: i.CreatedBy, CompanyID: i.CompanyID})
@@ -501,7 +557,48 @@ func (i *Importer) ImportDaily(ctx context.Context, rows []DailyRow) (Counts, er
 	return counts, nil
 }
 
-func (i *Importer) findOrCreateCustomer(ctx context.Context, row DailyRow) (pgtype.UUID, error) {
+func (i *Importer) resolveRouting(ctx context.Context, row MappedRow) (pgtype.UUID, pgtype.UUID, error) {
+	if strings.TrimSpace(row.Courier) == "" {
+		return pgtype.UUID{}, pgtype.UUID{}, nil
+	}
+	couriers, err := i.Queries.ListCouriers(ctx, i.CompanyID)
+	if err != nil {
+		return pgtype.UUID{}, pgtype.UUID{}, err
+	}
+	var courierID pgtype.UUID
+	for _, courier := range couriers {
+		if normalizeName(courier.Name) == normalizeName(row.Courier) {
+			courierID = courier.ID
+			break
+		}
+	}
+	if !courierID.Valid {
+		courier, createErr := i.Queries.CreateCourier(ctx, db.CreateCourierParams{Name: strings.TrimSpace(row.Courier), CompanyID: i.CompanyID})
+		if createErr != nil {
+			return pgtype.UUID{}, pgtype.UUID{}, createErr
+		}
+		courierID = courier.ID
+	}
+	if strings.TrimSpace(row.Location) == "" {
+		return courierID, pgtype.UUID{}, nil
+	}
+	locations, err := i.Queries.ListCourierLocations(ctx, db.ListCourierLocationsParams{CourierID: courierID, CompanyID: i.CompanyID})
+	if err != nil {
+		return pgtype.UUID{}, pgtype.UUID{}, err
+	}
+	for _, location := range locations {
+		if normalizeName(location.LocationName) == normalizeName(row.Location) {
+			return courierID, location.ID, nil
+		}
+	}
+	location, err := i.Queries.CreateCourierLocation(ctx, db.CreateCourierLocationParams{CourierID: courierID, CompanyID: i.CompanyID, LocationName: strings.TrimSpace(row.Location)})
+	if err != nil {
+		return pgtype.UUID{}, pgtype.UUID{}, err
+	}
+	return courierID, location.ID, nil
+}
+
+func (i *Importer) findOrCreateCustomer(ctx context.Context, row MappedRow) (pgtype.UUID, error) {
 	phone := NormalizePhone(row.Phone)
 	customer, err := i.Queries.GetCustomerByPhone(ctx, db.GetCustomerByPhoneParams{Phone: phone, CompanyID: i.CompanyID})
 	if err == nil {

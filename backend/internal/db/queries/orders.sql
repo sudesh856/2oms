@@ -81,8 +81,8 @@ RETURNING id, customer_id, source, status, courier_id, location_id, address,
 
 -- name: CreateLegacyOrder :one
 INSERT INTO orders (customer_id, source, status, address, cod_amount, is_store_visit,
-                    created_by, created_at, is_legacy, company_id, legacy_source_key)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, TRUE, $9, $10)
+                    courier_id, location_id, created_by, created_at, is_legacy, company_id, legacy_source_key)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, TRUE, $11, $12)
 ON CONFLICT (company_id, legacy_source_key) WHERE legacy_source_key IS NOT NULL DO NOTHING
 RETURNING id, customer_id, source, status, courier_id, location_id, address,
           cod_amount, is_store_visit, created_by, created_at, updated_at, is_legacy;

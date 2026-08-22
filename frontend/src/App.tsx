@@ -275,7 +275,7 @@ async function apiFetch(path: string, options: RequestInit = {}) {
     headers.set("Authorization", `Bearer ${currentToken}`);
   }
 
-  if (options.body && !headers.has("Content-Type")) {
+  if (options.body && !(options.body instanceof FormData) && !headers.has("Content-Type")) {
     headers.set("Content-Type", "application/json");
   }
 
@@ -3047,6 +3047,7 @@ function LegacyImport() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [mappedMode, setMappedMode] = useState(false);
   const status = run?.Status ?? "";
 
   async function loadStatus() {
@@ -3099,7 +3100,11 @@ function LegacyImport() {
       <PageHeader eyebrow="Administration" title="Historical import" description="Import the existing company records into the normal OMS screens." />
       {error && <div className="alert error">{error}</div>}
       <section className="card form-card">
-        {loading ? <p className="muted">Loading import status...</p> : run ? (
+        <div className="form-actions">
+          <button className="button ghost" type="button" onClick={() => setMappedMode(false)}>Fixed Nephot import</button>
+          <button className="button ghost" type="button" onClick={() => setMappedMode(true)}>Upload mapped files</button>
+        </div>
+        {mappedMode ? <MappedImport /> : loading ? <p className="muted">Loading import status...</p> : run ? (
           <div className="stack">
             <div className="section-heading"><div><span className="eyebrow">Import status</span><h2>{status}</h2></div></div>
             <div className="compact-list">
@@ -3127,6 +3132,89 @@ function LegacyImport() {
         )}
       </section>
     </Layout>
+  );
+}
+
+type UploadedTable = { id: string; status: string; headers: string[]; preview: Array<Record<string, string>> };
+
+function MappedImport() {
+  const fields = ["name", "phone", "phone2", "address", "product", "quantity", "cod_amount", "status", "courier", "location", "remarks", "date"];
+  const [ordersFile, setOrdersFile] = useState<File | null>(null);
+  const [optionalFiles, setOptionalFiles] = useState<Record<string, File | null>>({ products: null, couriers: null, locations: null });
+  const [upload, setUpload] = useState<UploadedTable | null>(null);
+  const [mapping, setMapping] = useState<Record<string, string>>({});
+  const [year, setYear] = useState(String(new Date().getFullYear()));
+  const [source, setSource] = useState("phone");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
+
+  async function uploadFiles(event: React.FormEvent) {
+    event.preventDefault();
+    if (!ordersFile) return;
+    setSaving(true);
+    setError("");
+    const form = new FormData();
+    form.append("orders", ordersFile);
+    Object.entries(optionalFiles).forEach(([name, file]) => { if (file) form.append(name, file); });
+    try {
+      const response = await apiFetch("/imports/mapped/upload", { method: "POST", body: form });
+      if (!response.ok) throw new Error(await readError(response));
+      const data: UploadedTable = await response.json();
+      setUpload(data);
+      const defaults: Record<string, string> = {};
+      fields.forEach((field) => { const match = data.headers.find((header) => header.toLowerCase().replaceAll(" ", "_") === field); if (match) defaults[field] = match; });
+      setMapping(defaults);
+      setMessage("File uploaded. Review the mapping before importing.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to upload files");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function startMappedImport(event: React.FormEvent) {
+    event.preventDefault();
+    if (!upload) return;
+    if (!window.confirm("Start importing these mapped records into this company?")) return;
+    setSaving(true);
+    setError("");
+    try {
+      const mappingResponse = await apiFetch(`/imports/mapped/${upload.id}/mapping`, { method: "PUT", body: JSON.stringify({ mapping }) });
+      if (!mappingResponse.ok) throw new Error(await readError(mappingResponse));
+      const response = await apiFetch(`/imports/mapped/${upload.id}/start`, { method: "POST", body: JSON.stringify({ year: Number(year), source, mapping }) });
+      if (!response.ok) throw new Error(await readError(response));
+      setMessage("Mapped import started. Check the fixed import status for progress.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to start mapped import");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (!upload) return (
+    <form className="stack" onSubmit={uploadFiles}>
+      <div className="section-heading"><div><span className="eyebrow">Flexible import</span><h2>Upload company files</h2></div></div>
+      <label>Orders file <input type="file" accept=".csv,.xlsx" onChange={(event) => setOrdersFile(event.target.files?.[0] ?? null)} required /></label>
+      <label>Products file (optional) <input type="file" accept=".csv,.xlsx" onChange={(event) => setOptionalFiles((current) => ({ ...current, products: event.target.files?.[0] ?? null }))} /></label>
+      <label>Couriers file (optional) <input type="file" accept=".csv,.xlsx" onChange={(event) => setOptionalFiles((current) => ({ ...current, couriers: event.target.files?.[0] ?? null }))} /></label>
+      <label>Locations file (optional) <input type="file" accept=".csv,.xlsx" onChange={(event) => setOptionalFiles((current) => ({ ...current, locations: event.target.files?.[0] ?? null }))} /></label>
+      {error && <div className="alert error">{error}</div>}
+      <button className="button primary" type="submit" disabled={saving}>{saving ? "Uploading..." : "Upload files"}</button>
+    </form>
+  );
+
+  return (
+    <form className="stack" onSubmit={startMappedImport}>
+      <div className="section-heading"><div><span className="eyebrow">Column mapping</span><h2>Map your columns</h2></div></div>
+      {message && <div className="alert success">{message}</div>}
+      <div className="form-grid">{fields.map((field) => <label key={field}>{field.replaceAll("_", " ")}<select value={mapping[field] ?? ""} onChange={(event) => setMapping((current) => ({ ...current, [field]: event.target.value }))}><option value="">No mapping</option>{upload.headers.map((header) => <option key={header} value={header}>{header}</option>)}</select></label>)}</div>
+      <label>Historical year<input type="number" min="2000" max="2100" value={year} onChange={(event) => setYear(event.target.value)} required /></label>
+      <label>Default order source<select value={source} onChange={(event) => setSource(event.target.value)}><option value="website">Website</option><option value="daraz">Daraz</option><option value="phone">Phone</option><option value="facebook">Facebook</option><option value="instagram">Instagram</option><option value="store">Store</option></select></label>
+      <div className="table-wrap"><table><thead><tr>{upload.headers.map((header) => <th key={header}>{header}</th>)}</tr></thead><tbody>{upload.preview.map((row, index) => <tr key={index}>{upload.headers.map((header) => <td key={header}>{row[header]}</td>)}</tr>)}</tbody></table></div>
+      {error && <div className="alert error">{error}</div>}
+      <button className="button primary" type="submit" disabled={saving}>{saving ? "Starting..." : "Confirm and import"}</button>
+    </form>
   );
 }
 

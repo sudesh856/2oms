@@ -196,6 +196,24 @@ type FollowUp struct {
 	CompanyID      pgtype.UUID
 }
 
+type ImportUpload struct {
+	ID            pgtype.UUID
+	CompanyID     pgtype.UUID
+	UploadedBy    pgtype.UUID
+	OrdersData    []byte
+	ProductsData  []byte
+	CouriersData  []byte
+	LocationsData []byte
+	FileNames     []byte
+	Headers       []byte
+	Preview       []byte
+	Mapping       []byte
+	ReviewLog     []byte
+	Status        string
+	CreatedAt     pgtype.Timestamptz
+	UpdatedAt     pgtype.Timestamptz
+}
+
 type LegacyImportRun struct {
 	ID           pgtype.UUID
 	CompanyID    pgtype.UUID

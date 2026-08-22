@@ -165,6 +165,15 @@ func NewRouter(
 		r.With(auth.RequireRole("superadmin", "admin")).Post("/api/users/{id}/revoke-invitation", userHandler.RevokeInvitation)
 		r.With(auth.RequireRole("superadmin")).Post("/api/imports/legacy", importHandler.Start)
 		r.With(auth.RequireRole("superadmin")).Get("/api/imports/legacy", importHandler.Status)
+		r.With(auth.RequireRole("superadmin")).Post("/api/imports/mapped/upload", importHandler.Upload)
+		r.With(auth.RequireRole("superadmin")).Get("/api/imports/mapped/{id}/preview", importHandler.Preview)
+		r.With(auth.RequireRole("superadmin")).Get("/api/imports/mapped/{id}/review", importHandler.Review)
+		r.With(auth.RequireRole("superadmin")).Put("/api/imports/mapped/{id}/mapping", importHandler.SaveMapping)
+		r.With(auth.RequireRole("superadmin")).Post("/api/imports/mapped/{id}/start", importHandler.SaveMappingAndStart)
+		r.With(auth.RequireRole("superadmin")).Post("/api/imports/mapped/upload", importHandler.Upload)
+		r.With(auth.RequireRole("superadmin")).Get("/api/imports/mapped/{id}/preview", importHandler.Preview)
+		r.With(auth.RequireRole("superadmin")).Put("/api/imports/mapped/{id}/mapping", importHandler.SaveMapping)
+		r.With(auth.RequireRole("superadmin")).Post("/api/imports/mapped/{id}/start", importHandler.SaveMappingAndStart)
 
 		r.With(auth.RequireRole("staff", "admin", "superadmin")).Get("/api/staff/test", func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
