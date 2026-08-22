@@ -132,6 +132,7 @@ func NewRouter(
 		r.With(auth.RequireRole("superadmin", "admin", "staff")).Get("/api/products/{id}", productHandler.GetProduct)
 		r.With(auth.RequireRole("superadmin", "admin")).Put("/api/products/{id}", productHandler.UpdateProduct)
 		r.With(auth.RequireRole("superadmin", "admin", "staff")).Get("/api/orders/{id}", orderHandler.GetOrder)
+		r.With(auth.RequireRole("superadmin", "admin", "staff")).Get("/api/orders/{id}/items", orderHandler.GetOrderItems)
 		r.With(auth.RequireRole("superadmin", "admin", "staff")).Get("/api/orders", orderHandler.ListOrders)
 		r.With(auth.RequireRole("superadmin", "admin", "staff")).Post("/api/orders", orderHandler.CreateOrder)
 		r.With(auth.RequireRole("superadmin", "admin", "staff")).Patch("/api/orders/{id}/status", orderHandler.UpdateStatus)
@@ -193,7 +194,7 @@ func NewRouter(
 func allowedOrigins() []string {
 	value := strings.TrimSpace(os.Getenv("ALLOWED_ORIGINS"))
 	if value == "" {
-		return []string{"http://localhost:5173"}
+		return []string{"https://frontend398745lkajsgd.onrender.com"}
 	}
 
 	origins := make([]string, 0)
@@ -204,7 +205,7 @@ func allowedOrigins() []string {
 		}
 	}
 	if len(origins) == 0 {
-		return []string{"http://localhost:5173"}
+		return []string{"https://frontend398745lkajsgd.onrender.com"}
 	}
 	return origins
 }

@@ -68,11 +68,13 @@ func writeOrderJSON(w http.ResponseWriter, order any, staff bool, statusCode int
 		"CourierID":    "courier_id",
 		"LocationID":   "location_id",
 		"Address":      "address",
+		"CodAmount":    "cod_amount",
 		"CODAmount":    "cod_amount",
 		"IsStoreVisit": "is_store_visit",
 		"CreatedBy":    "created_by",
 		"CreatedAt":    "created_at",
 		"UpdatedAt":    "updated_at",
+		"IsLegacy":     "is_legacy",
 	}
 
 	result := make(map[string]any, len(raw))
@@ -112,8 +114,8 @@ func writeCreatedOrderJSON(w http.ResponseWriter, order any, warnings []StockWar
 	rename := map[string]string{
 		"ID": "id", "CustomerID": "customer_id", "Source": "source", "Status": "status",
 		"CourierID": "courier_id", "LocationID": "location_id", "Address": "address",
-		"CODAmount": "cod_amount", "IsStoreVisit": "is_store_visit", "CreatedBy": "created_by",
-		"CreatedAt": "created_at", "UpdatedAt": "updated_at",
+		"CodAmount": "cod_amount", "CODAmount": "cod_amount", "IsStoreVisit": "is_store_visit", "CreatedBy": "created_by",
+		"CreatedAt": "created_at", "UpdatedAt": "updated_at", "IsLegacy": "is_legacy",
 	}
 	result := make(map[string]any, len(raw)+1)
 	for key, value := range raw {
@@ -175,11 +177,13 @@ func writeOrdersJSON(w http.ResponseWriter, orders any, staff bool) {
 		"CourierID":    "courier_id",
 		"LocationID":   "location_id",
 		"Address":      "address",
+		"CodAmount":    "cod_amount",
 		"CODAmount":    "cod_amount",
 		"IsStoreVisit": "is_store_visit",
 		"CreatedBy":    "created_by",
 		"CreatedAt":    "created_at",
 		"UpdatedAt":    "updated_at",
+		"IsLegacy":     "is_legacy",
 	}
 
 	result := make([]map[string]any, 0, len(raw))
@@ -207,6 +211,124 @@ func writeOrdersJSON(w http.ResponseWriter, orders any, staff bool) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(result)
 }
+
+func writeOrderItemsJSON(w http.ResponseWriter, items any) {
+	data, err := json.Marshal(items)
+	if err != nil {
+		api.WriteError(
+			w,
+			http.StatusInternalServerError,
+			"ORDER_ITEMS_SERIALIZE_FAILED",
+			"failed to serialize order items",
+		)
+		return
+	}
+
+	var raw []map[string]any
+
+	if err := json.Unmarshal(data, &raw); err != nil {
+		api.WriteError(
+			w,
+			http.StatusInternalServerError,
+			"ORDER_ITEMS_SERIALIZE_FAILED",
+			"failed to serialize order items",
+		)
+		return
+	}
+
+	rename := map[string]string{
+		"ID":        "id",
+		"OrderID":   "order_id",
+		"ProductID": "product_id",
+		"Quantity":  "quantity",
+		"Price":     "price",
+	}
+
+	result := make([]map[string]any, 0, len(raw))
+
+	for _, item := range raw {
+		normalized := make(map[string]any, len(item))
+
+		for key, value := range item {
+			jsonKey, ok := rename[key]
+
+			if !ok {
+				jsonKey = key
+			}
+
+			normalized[jsonKey] = value
+		}
+
+		result = append(result, normalized)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(result)
+}
+
+func (h *Handler) GetOrderItems(w http.ResponseWriter, r *http.Request) {
+	companyID, companyOK := auth.GetCompanyID(r.Context())
+	if !companyOK {
+		api.WriteError(w, http.StatusUnauthorized, "UNAUTHORIZED", "unauthorized")
+		return
+	}
+	orderID, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		api.WriteError(w, http.StatusBadRequest, "INVALID_ORDER_ID", "invalid order id")
+		return
+	}
+
+	id := pgtype.UUID{
+		Bytes: orderID,
+		Valid: true,
+	}
+
+	claims, ok := auth.GetClaims(r.Context())
+	if !ok {
+		api.WriteError(w, http.StatusUnauthorized, "UNAUTHORIZED", "unauthorized")
+		return
+	}
+
+	switch claims.Role {
+	case "superadmin", "admin":
+		if _, err := h.Queries.GetOrderForAdmin(r.Context(), db.GetOrderForAdminParams{ID: id, CompanyID: companyID}); err != nil {
+			if err == pgx.ErrNoRows {
+				api.WriteError(w, http.StatusNotFound, "ORDER_NOT_FOUND", "order not found")
+				return
+			}
+			api.WriteError(w, http.StatusInternalServerError, "ORDER_FETCH_FAILED", "failed to get order")
+			return
+		}
+	case "staff":
+		if _, err := h.Queries.GetOrderForStaff(r.Context(), db.GetOrderForStaffParams{ID: id, CompanyID: companyID}); err != nil {
+			if err == pgx.ErrNoRows {
+				api.WriteError(w, http.StatusNotFound, "ORDER_NOT_FOUND", "order not found")
+				return
+			}
+			api.WriteError(w, http.StatusInternalServerError, "ORDER_FETCH_FAILED", "failed to get order")
+			return
+		}
+	default:
+		api.WriteError(w, http.StatusForbidden, "FORBIDDEN", "forbidden")
+		return
+	}
+
+	items, err := h.Queries.ListOrderItems(r.Context(), db.ListOrderItemsParams{
+		OrderID:   id,
+		CompanyID: companyID,
+	})
+	if err != nil {
+		api.WriteError(w, http.StatusInternalServerError, "ORDER_ITEMS_FETCH_FAILED", "failed to list order items")
+		return
+	}
+
+	if items == nil {
+		items = []db.ListOrderItemsRow{}
+	}
+
+	writeOrderItemsJSON(w, items)
+}
+
 func (h *Handler) GetOrder(w http.ResponseWriter, r *http.Request) {
 	companyID, companyOK := auth.GetCompanyID(r.Context())
 	if !companyOK {

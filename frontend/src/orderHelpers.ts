@@ -63,3 +63,76 @@ export function calculateCartTotal(cart: CartItem[]) {
     0
   );
 }
+
+export type Order = {
+  id: string;
+  customer_id: string;
+  source: string;
+  status: string;
+  courier_id?: string | null;
+  location_id?: string | null;
+  address: string;
+  cod_amount?: unknown;
+  is_store_visit: boolean;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+  is_legacy?: boolean;
+};
+
+export function normalizeOrder(value: Partial<Order> & {
+  ID?: string;
+  CustomerID?: string;
+  Source?: string;
+  Status?: string;
+  CourierID?: string | null;
+  LocationID?: string | null;
+  Address?: string;
+  CodAmount?: unknown;
+  CODAmount?: unknown;
+  IsStoreVisit?: boolean;
+  CreatedBy?: string;
+  CreatedAt?: string;
+  UpdatedAt?: string;
+  IsLegacy?: boolean;
+}): Order {
+  return {
+    id: value.id ?? value.ID ?? "",
+    customer_id: value.customer_id ?? value.CustomerID ?? "",
+    source: value.source ?? value.Source ?? "",
+    status: value.status ?? value.Status ?? "",
+    courier_id: value.courier_id ?? value.CourierID,
+    location_id: value.location_id ?? value.LocationID,
+    address: value.address ?? value.Address ?? "",
+    cod_amount: value.cod_amount ?? value.CodAmount ?? value.CODAmount,
+    is_store_visit: value.is_store_visit ?? value.IsStoreVisit ?? false,
+    created_by: value.created_by ?? value.CreatedBy ?? "",
+    created_at: value.created_at ?? value.CreatedAt ?? "",
+    updated_at: value.updated_at ?? value.UpdatedAt ?? "",
+    is_legacy: value.is_legacy ?? value.IsLegacy,
+  };
+}
+
+export type OrderItem = {
+  id: string;
+  order_id: string;
+  product_id: string;
+  quantity: number;
+  price: unknown;
+};
+
+export function normalizeOrderItem(value: Partial<OrderItem> & {
+  ID?: string;
+  OrderID?: string;
+  ProductID?: string;
+  Quantity?: number;
+  Price?: unknown;
+}): OrderItem {
+  return {
+    id: String(value.id ?? value.ID ?? ""),
+    order_id: value.order_id ?? value.OrderID ?? "",
+    product_id: value.product_id ?? value.ProductID ?? "",
+    quantity: Number(value.quantity ?? value.Quantity ?? 0),
+    price: value.price ?? value.Price,
+  };
+}

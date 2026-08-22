@@ -13,9 +13,13 @@ import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from "recharts";
 import {
   calculateCartTotal,
   normalizeCustomer,
+  normalizeOrder,
+  normalizeOrderItem,
   normalizeProduct,
   type CartItem,
   type Customer,
+  type Order,
+  type OrderItem,
   type Product,
 } from "./orderHelpers";
 const API = import.meta.env.VITE_API_BASE_URL || "http://localhost:8080/api";
@@ -26,30 +30,6 @@ type TokenPayload = {
   role: Role;
   user_id?: string;
   exp?: number;
-};
-
-type Order = {
-  id: string;
-  customer_id: string;
-  source: string;
-  status: string;
-  courier_id?: string | null;
-  location_id?: string | null;
-  address: string;
-  cod_amount?: unknown;
-  is_store_visit: boolean;
-  created_by: string;
-  created_at: string;
-  updated_at: string;
-  is_legacy?: boolean;
-};
-
-type OrderItem = {
-  id: number;
-  order_id: string;
-  product_id: string;
-  quantity: number;
-  price: unknown;
 };
 
 type FollowUp = {
@@ -2270,7 +2250,8 @@ function Orders() {
           throw new Error(await readError(response));
         }
 
-        setOrders(await response.json());
+        const data = await response.json();
+        setOrders(Array.isArray(data) ? data.map(normalizeOrder) : []);
       } catch (err) {
         setError(
           err instanceof Error
@@ -2417,7 +2398,7 @@ function OrderDetail() {
         throw new Error(await readError(orderResponse));
       }
 
-      const orderData: Order = await orderResponse.json();
+      const orderData = normalizeOrder(await orderResponse.json());
 
       setOrder(orderData);
       setNewStatus(orderData.status);
@@ -2427,7 +2408,7 @@ function OrderDetail() {
       );
 
       if (customerResponse.ok) {
-        setCustomer(await customerResponse.json());
+        setCustomer(normalizeCustomer(await customerResponse.json()));
       }
 
       const itemsResponse = await apiFetch(
@@ -2435,13 +2416,15 @@ function OrderDetail() {
       );
 
       if (itemsResponse.ok) {
-        setItems(await itemsResponse.json());
+        const data = await itemsResponse.json();
+        setItems(Array.isArray(data) ? data.map(normalizeOrderItem) : []);
       }
 
       const productsResponse = await apiFetch("/products");
 
       if (productsResponse.ok) {
-        setProducts(await productsResponse.json());
+        const data = await productsResponse.json();
+        setProducts(Array.isArray(data) ? data.map(normalizeProduct) : []);
       }
     } catch (err) {
       setError(
@@ -2482,7 +2465,7 @@ function OrderDetail() {
         throw new Error(await readError(response));
       }
 
-      setOrder(await response.json());
+      setOrder(normalizeOrder(await response.json()));
       setMessage("Order status updated.");
     } catch (err) {
       setError(

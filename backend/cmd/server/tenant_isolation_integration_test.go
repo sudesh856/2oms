@@ -116,6 +116,7 @@ func TestTenantIsolationAcrossRegisteredResources(t *testing.T) {
 				"/api/customers/" + pair.own.customerID.String(),
 				"/api/products/" + pair.own.productID.String(),
 				"/api/orders/" + pair.own.orderID.String(),
+				"/api/orders/" + pair.own.orderID.String() + "/items",
 				"/api/customers/" + pair.own.customerID.String() + "/history",
 			}
 			for _, path := range objectPaths {
@@ -129,6 +130,7 @@ func TestTenantIsolationAcrossRegisteredResources(t *testing.T) {
 				"/api/customers/" + pair.other.customerID.String(),
 				"/api/products/" + pair.other.productID.String(),
 				"/api/orders/" + pair.other.orderID.String(),
+				"/api/orders/" + pair.other.orderID.String() + "/items",
 				"/api/customers/" + pair.other.customerID.String() + "/history",
 				"/api/couriers/" + pair.other.courierID.String() + "/locations",
 				"/api/couriers/" + pair.other.courierID.String() + "/locations/" + pair.other.locationID.String(),
